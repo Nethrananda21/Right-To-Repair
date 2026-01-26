@@ -1,242 +1,406 @@
 "use client";
 
-import { useState } from "react";
-import ImageUpload from "@/components/ImageUpload";
-import DetectionResults from "@/components/DetectionResults";
-import { detectFull, DetectionResult } from "@/lib/api";
+import { useState, useEffect, useRef } from "react";
+import Sidebar from "@/components/Sidebar";
+import Header from "@/components/Header";
+import ChatInput from "@/components/ChatInput";
+import UserMessage from "@/components/UserMessage";
+import AIMessage from "@/components/AIMessage";
+import DetectionConfirm from "@/components/DetectionConfirm";
+import {
+  getSessions,
+  createSession,
+  getSessionDetails,
+  sendMessage,
+  deleteSession,
+  updateDetectedItem,
+  Session,
+  Message,
+  ChatResponse,
+  DetectionData,
+} from "@/lib/chatApi";
+
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  imageUrl?: string;
+  responseType?: "text" | "detection" | "repair_results" | "clarification";
+  data?: ChatResponse["data"];
+}
+
+interface PendingDetection {
+  data: DetectionData;
+  imageUrl?: string;
+  sessionId: string;
+}
 
 export default function Home() {
-  const [itemImage, setItemImage] = useState<File | null>(null);
-  const [serialImage, setSerialImage] = useState<File | null>(null);
+  // Theme state
+  const [isDark, setIsDark] = useState(false);
+  
+  // Sidebar state
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
+  // Session state
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [detectedItem, setDetectedItem] = useState<DetectionData | null>(null);
+  
+  // Chat state
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<DetectionResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isConfirmed, setIsConfirmed] = useState(false);
-  const [confirmedResult, setConfirmedResult] = useState<DetectionResult | null>(null);
+  const [lastImageUrl, setLastImageUrl] = useState<string | null>(null);
+  
+  // Pending detection confirmation
+  const [pendingDetection, setPendingDetection] = useState<PendingDetection | null>(null);
+  
+  // Refs
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const handleDetect = async () => {
-    if (!itemImage) {
-      setError("Please upload an image of the item");
-      return;
+  // Initialize
+  useEffect(() => {
+    loadSessions();
+    
+    // Check for dark mode preference
+    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      setIsDark(true);
+      document.documentElement.classList.add("dark");
     }
+  }, []);
 
-    setIsLoading(true);
-    setError(null);
-    setResult(null);
-    setIsConfirmed(false);
-    setConfirmedResult(null);
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
 
+  // Load sessions
+  const loadSessions = async () => {
     try {
-      const detectionResult = await detectFull(itemImage, serialImage);
-      setResult(detectionResult);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Detection failed");
+      const data = await getSessions();
+      setSessions(data);
+    } catch (error) {
+      console.error("Failed to load sessions:", error);
+    }
+  };
+
+  // Create new session
+  const handleNewSession = async () => {
+    try {
+      const session = await createSession();
+      setSessions((prev) => [session, ...prev]);
+      setCurrentSessionId(session.id);
+      setMessages([]);
+      setDetectedItem(null);
+      setLastImageUrl(null);
+      setIsMobileMenuOpen(false);
+    } catch (error) {
+      console.error("Failed to create session:", error);
+    }
+  };
+
+  // Select existing session
+  const handleSelectSession = async (sessionId: string) => {
+    try {
+      const data = await getSessionDetails(sessionId);
+      setCurrentSessionId(sessionId);
+      setDetectedItem(data.detected_item || null);
+      
+      // Convert messages to chat format, preserving image_data
+      const chatMessages: ChatMessage[] = data.messages.map((msg: Message) => ({
+        id: String(msg.id),
+        role: msg.role,
+        content: msg.content,
+        responseType: msg.metadata?.response_type as ChatMessage["responseType"],
+        data: msg.metadata?.data as ChatMessage["data"],
+        imageUrl: msg.image_data || undefined,  // Use stored base64 image
+      }));
+      
+      // Set lastImageUrl to the most recent user image for AI responses
+      const lastUserImage = [...data.messages].reverse().find((m: Message) => m.role === "user" && m.image_data);
+      if (lastUserImage?.image_data) {
+        setLastImageUrl(lastUserImage.image_data);
+      }
+      
+      setMessages(chatMessages);
+    } catch (error) {
+      console.error("Failed to load session:", error);
+    }
+  };
+
+  // Delete session
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await deleteSession(sessionId);
+      
+      // Remove from local state
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      
+      // If deleted current session, clear the view
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId(null);
+        setMessages([]);
+        setDetectedItem(null);
+        setLastImageUrl(null);
+      }
+    } catch (error) {
+      console.error("Failed to delete session:", error);
+    }
+  };
+
+  // Toggle dark mode
+  const toggleDarkMode = () => {
+    setIsDark(!isDark);
+    document.documentElement.classList.toggle("dark");
+  };
+
+  // Handle detection confirmation - user confirms/edits details and searches
+  const handleConfirmDetection = async (confirmedData: DetectionData) => {
+    if (!pendingDetection) return;
+    
+    // Update detected item with confirmed data
+    setDetectedItem(confirmedData);
+    
+    // First, update the detected item in the database so searches use the corrected info
+    try {
+      await updateDetectedItem(pendingDetection.sessionId, confirmedData);
+    } catch (error) {
+      console.error("Failed to update detected item:", error);
+    }
+    
+    // Add the detection message to chat
+    const detectionMessage: ChatMessage = {
+      id: `ai-${Date.now()}`,
+      role: "assistant",
+      content: `I identified this as a **${confirmedData.brand ? confirmedData.brand + " " : ""}${confirmedData.object}${confirmedData.model ? ` (${confirmedData.model})` : ""}**.\n\n**Condition:** ${confirmedData.condition}\n\n${confirmedData.issues.length > 0 ? "**Issues:**\n" + confirmedData.issues.map(i => `• ${i}`).join("\n") : ""}`,
+      responseType: "detection",
+      data: confirmedData,
+      imageUrl: pendingDetection.imageUrl,
+    };
+    setMessages((prev) => [...prev, detectionMessage]);
+    
+    // Clear pending detection
+    setPendingDetection(null);
+    
+    // Automatically search for repair resources with the confirmed details
+    setIsLoading(true);
+    try {
+      // Use a simple trigger message - the backend will use the updated detected_item from DB
+      const response = await sendMessage("Find repair solutions", pendingDetection.sessionId);
+      
+      const aiMessage: ChatMessage = {
+        id: `ai-${Date.now() + 1}`,
+        role: "assistant",
+        content: response.message,
+        responseType: response.response_type,
+        data: response.data,
+        imageUrl: pendingDetection.imageUrl,
+      };
+      setMessages((prev) => [...prev, aiMessage]);
+      loadSessions(); // Refresh to show updated title
+    } catch (error) {
+      console.error("Failed to search:", error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleConfirm = (editedResult: DetectionResult) => {
-    setConfirmedResult(editedResult);
-    setIsConfirmed(true);
-    // TODO: Trigger repair search with confirmedResult
-    console.log("Confirmed result:", editedResult);
+  // Handle skip confirmation - just show basic detection without search
+  const handleSkipConfirmation = () => {
+    if (!pendingDetection) return;
+    
+    // Add the detection message to chat without searching
+    const detectionMessage: ChatMessage = {
+      id: `ai-${Date.now()}`,
+      role: "assistant",
+      content: `I identified this as a **${pendingDetection.data.brand ? pendingDetection.data.brand + " " : ""}${pendingDetection.data.object}**.\n\n**Condition:** ${pendingDetection.data.condition}\n\nClick the buttons below to search for repair resources, or add more details for better results.`,
+      responseType: "detection",
+      data: pendingDetection.data,
+      imageUrl: pendingDetection.imageUrl,
+    };
+    setMessages((prev) => [...prev, detectionMessage]);
+    
+    // Clear pending detection
+    setPendingDetection(null);
   };
 
-  const handleEdit = () => {
-    // This is now handled internally by DetectionResults component
-  };
+  // Send message
+  const handleSendMessage = async (message: string, image?: File) => {
+    // Create image URL for display
+    let imageUrl: string | undefined;
+    if (image) {
+      imageUrl = URL.createObjectURL(image);
+      setLastImageUrl(imageUrl);
+    }
 
-  const handleReset = () => {
-    setItemImage(null);
-    setSerialImage(null);
-    setResult(null);
-    setError(null);
-    setIsConfirmed(false);
+    // Add user message
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: message || (image ? "What's wrong with this?" : ""),
+      imageUrl,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setIsLoading(true);
+
+    try {
+      const response = await sendMessage(message, currentSessionId || undefined, image);
+      
+      // Update session ID if new
+      if (!currentSessionId) {
+        setCurrentSessionId(response.session_id);
+        loadSessions(); // Refresh session list
+      }
+
+      // If detection response, show confirmation dialog instead of adding message
+      if (response.response_type === "detection" && response.data) {
+        const detectionData: DetectionData = {
+          object: response.data.object || "",
+          brand: response.data.brand || "",
+          model: response.data.model || "",
+          condition: response.data.condition || "",
+          issues: response.data.issues || [],
+          description: response.data.description || "",
+        };
+        
+        // Store pending detection for confirmation
+        setPendingDetection({
+          data: detectionData,
+          imageUrl: imageUrl || lastImageUrl || undefined,
+          sessionId: response.session_id,
+        });
+        
+        setDetectedItem(detectionData);
+      } else {
+        // Non-detection response - add normally
+        const aiMessage: ChatMessage = {
+          id: `ai-${Date.now()}`,
+          role: "assistant",
+          content: response.message,
+          responseType: response.response_type,
+          data: response.data,
+          imageUrl: imageUrl || lastImageUrl || undefined,
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+      }
+    } catch (error) {
+      console.error("Failed to send message:", error);
+      
+      // Add error message
+      const errorMessage: ChatMessage = {
+        id: `error-${Date.now()}`,
+        role: "assistant",
+        content: "Sorry, I encountered an error. Please try again.",
+        responseType: "text",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
-      {/* Background Effects */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
-      </div>
+    <>
+      {/* Sidebar */}
+      <Sidebar
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        onSelectSession={handleSelectSession}
+        onNewSession={handleNewSession}
+        onDeleteSession={handleDeleteSession}
+        isMobileOpen={isMobileMenuOpen}
+        onCloseMobile={() => setIsMobileMenuOpen(false)}
+      />
 
-      <div className="relative z-10 container mx-auto px-4 py-8 max-w-4xl">
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col h-full relative overflow-hidden">
         {/* Header */}
-        <header className="text-center mb-12">
-          <div className="inline-flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-cyan-500 to-purple-600 rounded-xl flex items-center justify-center">
-              <svg
-                className="w-7 h-7 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                />
-              </svg>
-            </div>
-            <h1 className="text-3xl font-bold text-white">Right to Repair</h1>
-          </div>
-          <p className="text-gray-400 max-w-xl mx-auto">
-            Upload images of your broken item and we&apos;ll identify it, detect issues,
-            and help you find repair solutions.
-          </p>
-        </header>
+        <Header
+          onMenuClick={() => setIsMobileMenuOpen(true)}
+          isDark={isDark}
+          onToggleDark={toggleDarkMode}
+        />
 
-        {/* Main Content */}
-        {!result ? (
-          <div className="space-y-8">
-            {/* Upload Section */}
-            <div className="bg-gray-800/50 backdrop-blur-xl rounded-2xl border border-gray-700 p-6">
-              <h2 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-cyan-500 text-white text-sm flex items-center justify-center">
-                  1
-                </span>
-                Upload Images
-              </h2>
-
-              <div className="grid md:grid-cols-2 gap-6">
-                <ImageUpload
-                  label="Item Image *"
-                  description="Clear photo of the broken/damaged item"
-                  onImageSelect={setItemImage}
-                  selectedImage={itemImage}
-                />
-                <ImageUpload
-                  label="Serial Number Image (Optional)"
-                  description="Close-up of serial number, label, or product info"
-                  onImageSelect={setSerialImage}
-                  selectedImage={serialImage}
-                />
-              </div>
-            </div>
-
-            {/* Error Message */}
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
-                <div className="flex items-center gap-3">
-                  <svg
-                    className="w-5 h-5 text-red-400"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <p className="text-red-300">{error}</p>
+        {/* Chat Area */}
+        <div className="flex-1 relative overflow-y-auto p-4 md:p-10 blueprint-grid overflow-x-hidden">
+          {/* Messages */}
+          <div className="max-w-5xl mx-auto flex flex-col gap-8 md:gap-10 relative z-10 pb-40">
+            {/* Welcome message if no messages */}
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-[50vh] text-center">
+                <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-[var(--terracotta)]/10 border border-[var(--terracotta)]/30 flex items-center justify-center mb-6">
+                  <span className="material-symbols-outlined text-4xl md:text-5xl text-[var(--terracotta)]">
+                    build_circle
+                  </span>
                 </div>
+                <h2 className="font-display text-2xl md:text-3xl font-bold text-[var(--earth-dark)] mb-4">
+                  Welcome to Repair.AI
+                </h2>
+                <p className="text-[var(--earth-muted)] max-w-md text-sm md:text-base">
+                  Upload a photo of something broken and I'll help you diagnose the issue, 
+                  find repair guides, video tutorials, and spare parts.
+                </p>
               </div>
             )}
 
-            {/* Detect Button */}
-            <button
-              onClick={handleDetect}
-              disabled={!itemImage || isLoading}
-              className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-300 flex items-center justify-center gap-3 ${
-                !itemImage || isLoading
-                  ? "bg-gray-700 text-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-cyan-500 to-purple-600 hover:from-cyan-400 hover:to-purple-500 text-white transform hover:scale-[1.02]"
-              }`}
-            >
-              {isLoading ? (
-                <>
-                  <svg
-                    className="animate-spin h-5 w-5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
-                  Analyzing with AI...
-                </>
-              ) : (
-                <>
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                  Detect Item
-                </>
-              )}
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Results Section */}
-            <DetectionResults
-              result={result}
-              onConfirm={handleConfirm}
-              onEdit={handleEdit}
-              isConfirmed={isConfirmed}
-            />
-
-            {/* Try Another Button */}
-            <button
-              onClick={handleReset}
-              className="w-full py-3 px-6 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-xl transition-colors flex items-center justify-center gap-2"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            {/* Chat messages */}
+            {messages.map((msg) => (
+              msg.role === "user" ? (
+                <UserMessage
+                  key={msg.id}
+                  content={msg.content}
+                  imageUrl={msg.imageUrl}
                 />
-              </svg>
-              Try Another Item
-            </button>
-          </div>
-        )}
+              ) : (
+                <AIMessage
+                  key={msg.id}
+                  content={msg.content}
+                  responseType={msg.responseType || "text"}
+                  data={msg.data}
+                  imageUrl={msg.imageUrl}
+                  onAction={(action: "parts" | "guide" | "video") => {
+                    // Trigger search based on action type
+                    const actionMessages: Record<"parts" | "guide" | "video", string> = {
+                      parts: "Find spare parts for this item",
+                      guide: "Find repair guides for this item",
+                      video: "Find video tutorials for this item"
+                    };
+                    handleSendMessage(actionMessages[action]);
+                  }}
+                />
+              )
+            ))}
 
-        {/* Footer */}
-        <footer className="mt-16 text-center text-gray-500 text-sm">
-          <p>
-            Powered by Qwen3-VL AI • Right to Repair Movement
-          </p>
-        </footer>
-      </div>
-    </main>
+            {/* Loading indicator */}
+            {isLoading && (
+              <AIMessage
+                content=""
+                responseType="text"
+                isLoading={true}
+              />
+            )}
+
+            {/* Detection Confirmation Dialog */}
+            {pendingDetection && !isLoading && (
+              <DetectionConfirm
+                data={pendingDetection.data}
+                imageUrl={pendingDetection.imageUrl}
+                onConfirm={handleConfirmDetection}
+                onCancel={handleSkipConfirmation}
+              />
+            )}
+
+            {/* Scroll anchor */}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* Input */}
+        <ChatInput
+          onSendMessage={handleSendMessage}
+          isLoading={isLoading}
+        />
+      </main>
+    </>
   );
 }

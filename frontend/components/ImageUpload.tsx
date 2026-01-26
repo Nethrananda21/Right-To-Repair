@@ -96,7 +96,7 @@ export default function ImageUpload({
           <img
             src={preview}
             alt="Preview"
-            className="w-full h-48 object-cover"
+            className="w-full h-48 object-contain bg-gray-900/50"
           />
           <button
             onClick={clearImage}

@@ -1,26 +1,248 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Quicksand:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --warm-beige: #F2EFE9;
+  --soft-sage: #E3E8E1;
+  --terracotta: #D97D54;
+  --earth-dark: #4A4A43;
+  --earth-muted: #8F8F85;
+  --delicate-gold: #C9B688;
+  --background: var(--warm-beige);
+  --foreground: var(--earth-dark);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--soft-sage);
+  color: var(--earth-dark);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--soft-sage);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--earth-muted);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--terracotta);
+}
+
+/* Blueprint Grid - Subtle background pattern */
+.blueprint-grid {
+  background-image: 
+    linear-gradient(rgba(74, 74, 67, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74, 74, 67, 0.03) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Glass Panel Effect */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(74, 74, 67, 0.08);
+}
+
+/* Polaroid Card Style */
+.polaroid {
+  background: white;
+  padding: 12px 12px 40px 12px;
+  box-shadow: 0 4px 15px rgba(74, 74, 67, 0.12);
+  border-radius: 4px;
+  transform: rotate(-1.5deg);
+  position: relative;
+}
+
+/* Tape Effect for Polaroid */
+.tape {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 24px;
+  background: linear-gradient(135deg, rgba(201, 182, 136, 0.7), rgba(201, 182, 136, 0.5));
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* X-Ray Overlay Effect */
+.xray-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(217, 125, 84, 0.2), rgba(201, 182, 136, 0.15));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.xray-active .xray-overlay {
+  opacity: 1;
+}
+
+.xray-active img {
+  filter: grayscale(100%) contrast(1.2);
+}
+
+/* Hotspot Marker */
+.hotspot-marker {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  background: var(--terracotta);
+  border: 3px solid white;
+  border-radius: 50%;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  animation: pulse-dot 2s ease-in-out infinite;
+  box-shadow: 0 2px 8px rgba(217, 125, 84, 0.4);
+}
+
+.hotspot-marker::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border: 2px solid var(--terracotta);
+  border-radius: 50%;
+  opacity: 0.5;
+  animation: pulse-ring 2s ease-in-out infinite;
+}
+
+/* Media Popup */
+.media-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  background: white;
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 8px 32px rgba(74, 74, 67, 0.15);
+  display: flex;
+  gap: 8px;
+  animation: popupIn 0.2s ease-out;
+}
+
+/* Delete Popup Modal */
+.delete-popup {
+  position: fixed;
+  inset: 0;
+  background: rgba(74, 74, 67, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.delete-popup-content {
+  background: white;
+  padding: 24px;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(74, 74, 67, 0.25);
+  max-width: 320px;
+  text-align: center;
+  animation: popupIn 0.25s ease-out;
+}
+
+/* Animations */
+@keyframes popupIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.1); }
+}
+
+@keyframes pulse-ring {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.3); opacity: 0.2; }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.3; }
+  30% { opacity: 1; }
+}
+
+/* Typing Indicator */
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--terracotta);
+  border-radius: 50%;
+  animation: typing 1.4s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Button Hover Effects */
+.btn-terracotta {
+  background: var(--terracotta);
+  color: white;
+  transition: all 0.2s ease;
+}
+
+.btn-terracotta:hover {
+  background: #c46a42;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(217, 125, 84, 0.3);
+}
+
+/* Sidebar Active Item */
+.sidebar-item {
+  transition: all 0.2s ease;
+}
+
+.sidebar-item:hover {
+  background: rgba(217, 125, 84, 0.1);
+}
+
+.sidebar-item.active {
+  background: rgba(217, 125, 84, 0.15);
+  border-left: 3px solid var(--terracotta);
+}
+
+/* Message Animation */
+.message-enter {
+  animation: fade-in-up 0.3s ease-out;
+}
+
+/* Material Icons */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }

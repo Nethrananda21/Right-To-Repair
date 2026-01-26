@@ -1,123 +1,165 @@
 """
-Repair API Routes - Search for repair solutions, guides, and spare parts
+Repair API Routes - Search for repair guides, tutorials, and parts
 """
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+from services.youtube_service import youtube_service
 from services.search_service import search_service
+from services.guide_extractor import guide_extractor
 
 router = APIRouter()
 
 
 class RepairSearchRequest(BaseModel):
-    object_name: str
-    brand: Optional[str] = ""
-    model: Optional[str] = ""
-    serial_number: Optional[str] = ""
-    issue: Optional[str] = ""
-
-
-class WebResult(BaseModel):
-    title: str
-    url: str
-    snippet: Optional[str] = ""
-    source: str
-
-
-class YouTubeResult(BaseModel):
-    title: str
-    video_id: str
-    url: str
-    channel: str
-    views: Optional[str] = ""
-    duration: Optional[str] = ""
-    thumbnail: Optional[str] = ""
-    source: str
-
-
-class IFixitResult(BaseModel):
-    title: str
-    url: str
-    source: str
-    type: Optional[str] = "guide"
-
-
-class SparePartResult(BaseModel):
-    store: str
-    search_url: str
-    icon: str
-    query: str
+    object: str
+    brand: str = ""
+    model: str = ""
+    issues: list[str] = []
 
 
 class RepairSearchResponse(BaseModel):
-    query: str
-    web_results: list[WebResult]
-    youtube_tutorials: list[YouTubeResult]
-    ifixit_guides: list[IFixitResult]
-    spare_parts: list[SparePartResult]
+    youtube: list
+    web: list
+    ifixit: list
+    parts: list = []
+    query_used: str
 
 
-class GuideStep(BaseModel):
-    number: int
-    text: str
+class TranscriptRequest(BaseModel):
+    video_id: str
 
 
-class GuideContentResponse(BaseModel):
-    url: str
+class TranscriptResponse(BaseModel):
+    video_id: str
     title: str
-    steps: list[GuideStep]
-    tools: list[str]
-    difficulty: Optional[str] = ""
-    time_estimate: Optional[str] = ""
-    error: Optional[str] = None
+    description: str
+    summary: str
+
+
+class ExtractRequest(BaseModel):
+    url: str
 
 
 @router.post("/search", response_model=RepairSearchResponse)
 async def search_repairs(request: RepairSearchRequest):
     """
-    Search for repair solutions, YouTube tutorials, and spare parts.
-    
-    Combines results from:
-    - Web search (DuckDuckGo)
-    - YouTube tutorials
-    - iFixit repair guides
-    - Spare parts stores (Amazon, AliExpress, eBay, iFixit)
+    Search for repair guides from YouTube, web, iFixit, and spare parts concurrently.
     """
     try:
-        results = await search_service.search_repair_solutions(
-            object_name=request.object_name,
-            brand=request.brand or "",
-            model=request.model or "",
-            issue=request.issue or ""
+        # Build search query
+        query = search_service.build_repair_query(
+            request.object,
+            request.brand,
+            request.model,
+            request.issues
+        )
+        
+        # Create tasks for parallel execution
+        youtube_task = youtube_service.search_tutorials(f"{query} tutorial", max_results=5)
+        web_task = search_service.search_repair_guides(
+            request.object,
+            request.brand,
+            request.model,
+            request.issues,
+            max_results=8
+        )
+        ifixit_task = search_service.search_ifixit(
+            request.object,
+            request.brand,
+            request.model
+        )
+        parts_task = search_service.search_spare_parts(
+            request.object,
+            request.brand,
+            request.model,
+            max_results=6
+        )
+        
+        # Run all searches concurrently
+        youtube_results, web_results, ifixit_results, parts_results = await asyncio.gather(
+            youtube_task, web_task, ifixit_task, parts_task
         )
         
         return RepairSearchResponse(
-            query=results["query"],
-            web_results=[WebResult(**r) for r in results["web_results"]],
-            youtube_tutorials=[YouTubeResult(**r) for r in results["youtube_tutorials"]],
-            ifixit_guides=[IFixitResult(**r) for r in results["ifixit_guides"]],
-            spare_parts=[SparePartResult(**r) for r in results["spare_parts"]]
+            youtube=youtube_results,
+            web=web_results,
+            ifixit=ifixit_results,
+            parts=parts_results,
+            query_used=query
         )
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@router.post("/guide", response_model=GuideContentResponse)
-async def extract_guide(url: str):
-    """
-    Extract repair guide content from a URL.
-    Works best with iFixit guides but also supports general web pages.
-    """
+@router.post("/transcript", response_model=TranscriptResponse)
+async def get_video_transcript(request: TranscriptRequest):
+    """Get video info and AI-generated summary."""
     try:
-        content = await search_service.extract_guide_content(url)
-        return GuideContentResponse(
-            url=content["url"],
-            title=content["title"],
-            steps=[GuideStep(**s) for s in content["steps"]],
-            tools=content["tools"],
-            difficulty=content.get("difficulty", ""),
-            time_estimate=content.get("time_estimate", ""),
-            error=content.get("error")
+        video_info = await youtube_service.get_video_info(request.video_id)
+        
+        if not video_info:
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        transcript = await youtube_service.get_transcript(request.video_id)
+        content = transcript or video_info.get("description", "")
+        
+        summary = ""
+        if content:
+            summary = await youtube_service.summarize_for_repair(
+                video_info.get("title", ""),
+                content
+            )
+        
+        return TranscriptResponse(
+            video_id=request.video_id,
+            title=video_info.get("title", ""),
+            description=video_info.get("description", "")[:500],
+            summary=summary
         )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Guide extraction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcript failed: {str(e)}")
+
+
+@router.post("/extract")
+async def extract_guide(request: ExtractRequest):
+    """Extract repair guide content from a URL."""
+    try:
+        url = request.url
+        
+        if "ifixit.com" in url:
+            result = await guide_extractor.extract_ifixit_guide(url)
+        else:
+            result = await guide_extractor.extract_article_content(url)
+        
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+
+
+@router.post("/parts")
+async def search_parts(request: RepairSearchRequest):
+    """Search for replacement parts."""
+    try:
+        results = await search_service.search_spare_parts(
+            request.object,
+            request.brand,
+            request.model,
+            max_results=10
+        )
+        
+        return {"parts": results}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Parts search failed: {str(e)}")

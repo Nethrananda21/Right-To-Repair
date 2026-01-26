@@ -13,6 +13,31 @@ export interface DetectionResult {
   confidence_note: string;
 }
 
+export interface YouTubeResult {
+  video_id: string;
+  title: string;
+  channel: string;
+  duration: string;
+  views: string;
+  thumbnail: string;
+  url: string;
+}
+
+export interface WebResult {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+}
+
+export interface RepairSearchResponse {
+  youtube: YouTubeResult[];
+  web: WebResult[];
+  ifixit: WebResult[];
+  parts: WebResult[];
+  query_used: string;
+}
+
 export async function detectFull(
   itemImage: File,
   serialImage?: File | null
@@ -37,33 +62,58 @@ export async function detectFull(
   return response.json();
 }
 
-export async function detectObject(image: File) {
-  const formData = new FormData();
-  formData.append("image", image);
-
-  const response = await fetch(`${API_BASE}/api/detect/object`, {
+export async function searchRepairs(
+  detection: DetectionResult
+): Promise<RepairSearchResponse> {
+  const response = await fetch(`${API_BASE}/api/repair/search`, {
     method: "POST",
-    body: formData,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      object: detection.object,
+      brand: detection.brand,
+      model: detection.model,
+      issues: detection.issues,
+    }),
   });
 
   if (!response.ok) {
-    throw new Error("Object detection failed");
+    throw new Error("Repair search failed");
   }
 
   return response.json();
 }
 
-export async function extractSerial(image: File) {
-  const formData = new FormData();
-  formData.append("image", image);
-
-  const response = await fetch(`${API_BASE}/api/detect/serial`, {
+export async function getVideoSummary(
+  videoId: string
+): Promise<{ title: string; description: string; summary: string }> {
+  const response = await fetch(`${API_BASE}/api/repair/transcript`, {
     method: "POST",
-    body: formData,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ video_id: videoId }),
   });
 
   if (!response.ok) {
-    throw new Error("Serial extraction failed");
+    throw new Error("Failed to get video summary");
+  }
+
+  return response.json();
+}
+
+export async function extractGuide(url: string): Promise<any> {
+  const response = await fetch(`${API_BASE}/api/repair/extract`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ url }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to extract guide");
   }
 
   return response.json();
