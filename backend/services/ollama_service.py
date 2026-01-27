@@ -1,12 +1,13 @@
 """
 Ollama Service - Integration with Qwen3-VL model using direct HTTP
+Optimized for RTX 4050 6GB VRAM with live video streaming support
 """
 import asyncio
 import base64
 import io
 import json
 import re
-from typing import Optional
+from typing import Optional, AsyncGenerator
 from PIL import Image
 import httpx
 
@@ -16,13 +17,45 @@ class OllamaService:
         self.model = "qwen3-vl:4b"
         # Reuse HTTP client with connection pooling for speed
         self._client = None
+        # Lock to prevent concurrent inference (DROP policy for live video)
+        self._is_processing = False
+        
+        # Options for LIVE video ONLY (faster, restricted for real-time)
+        self._live_inference_options = {
+            "num_ctx": 2048,      # Smaller context for speed
+            "num_predict": 500,   # Limited tokens for quick response
+            "temperature": 0.2,   # Lower for consistent JSON
+            "top_p": 0.9,
+            "num_gpu": 99,
+        }
+        # Regular detection uses Ollama defaults (no restrictions)
+    
+    async def warmup(self):
+        """Warm up the model by loading it into VRAM"""
+        try:
+            print("🔥 Warming up Ollama model...")
+            client = await self.get_client()
+            # Simple request to load model into memory
+            payload = {
+                "model": self.model,
+                "prompt": "Hello",
+                "stream": False,
+                "options": {"num_predict": 1}
+            }
+            await client.post(f"{self.host}/api/generate", json=payload)
+            print("✅ Model warmed up and ready")
+        except Exception as e:
+            print(f"⚠️ Warmup failed (model will load on first request): {e}")
     
     async def get_client(self) -> httpx.AsyncClient:
         """Get or create reusable HTTP client"""
         if self._client is None or self._client.is_closed:
+            # Disable proxy for localhost to avoid connection issues
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(120.0, connect=10.0),
-                limits=httpx.Limits(max_keepalive_connections=5)
+                limits=httpx.Limits(max_keepalive_connections=5),
+                proxy=None,  # Bypass any system proxy
+                trust_env=False  # Don't use HTTP_PROXY env vars
             )
         return self._client
     
@@ -53,6 +86,130 @@ class OllamaService:
             output = io.BytesIO()
             img.save(output, format='JPEG', quality=90, optimize=True)
             return output.getvalue()
+    
+    async def process_image_fast(self, image_bytes: bytes) -> bytes:
+        """Fast image processing for live video - smaller size (448px)"""
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._resize_image_sync, image_bytes, 448)
+        except Exception as e:
+            print(f"Fast image processing error: {e}")
+            return image_bytes
+    
+    def check_image_quality(self, image_bytes: bytes) -> dict:
+        """Quick quality check for live frames"""
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                # Check if image is too dark or too bright
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Sample pixels for quick brightness check
+                pixels = list(img.getdata())
+                if len(pixels) > 1000:
+                    pixels = pixels[::len(pixels)//1000]  # Sample ~1000 pixels
+                
+                avg_brightness = sum(sum(p) for p in pixels) / (len(pixels) * 3)
+                
+                return {
+                    "valid": 30 < avg_brightness < 240,
+                    "brightness": avg_brightness,
+                    "size": img.size
+                }
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+    
+    async def detect_object_live(self, image_bytes: bytes) -> dict:
+        """Fast detection for live video - strict JSON output"""
+        # DROP policy: skip if already processing
+        if self._is_processing:
+            return {"skipped": True, "reason": "busy"}
+        
+        self._is_processing = True
+        try:
+            optimized_image = await self.process_image_fast(image_bytes)
+            
+            prompt = """Analyze this image. Output ONLY valid JSON, nothing else:
+{"object":"item name","brand":"brand or empty","condition":"broken|damaged|worn|good","issues":["issue1"],"confidence":0.8}
+
+Rules:
+- condition: broken=parts detached, damaged=cracked/bent, worn=scratches, good=fine
+- confidence: 0.0-1.0 how sure you are
+- issues: list visible problems, empty [] if none
+
+/no_think"""
+            
+            response = await self._generate_live(prompt, [optimized_image])
+            result = self._parse_json_response(response, "object")
+            result["skipped"] = False
+            return result
+        finally:
+            self._is_processing = False
+    
+    async def stream_detect_live(self, image_bytes: bytes) -> AsyncGenerator[str, None]:
+        """Stream detection results for live video with token-by-token output"""
+        print(f"🎬 stream_detect_live called, _is_processing={self._is_processing}")
+        
+        if self._is_processing:
+            print("⏭️ Skipping - already processing")
+            yield '{"skipped": true, "reason": "busy"}'
+            return
+        
+        self._is_processing = True
+        try:
+            optimized_image = await self.process_image_fast(image_bytes)
+            image_b64 = base64.b64encode(optimized_image).decode('utf-8')
+            print(f"🖼️ Live image prepared: {len(image_b64)} chars")
+            
+            prompt = """Analyze this image. Output ONLY valid JSON:
+{"object":"item name","brand":"brand or empty","condition":"broken|damaged|worn|good","issues":["issue1"],"confidence":0.8}
+
+/no_think"""
+            
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "images": [image_b64],
+                "stream": True,
+                "options": self._live_inference_options  # Use live options for speed
+            }
+            
+            print(f"🔧 Live options: {self._live_inference_options}")
+            
+            client = await self.get_client()
+            print(f"📤 Sending streaming request to Ollama...")
+            
+            async with client.stream("POST", f"{self.host}/api/generate", json=payload) as response:
+                print(f"📥 Stream response status: {response.status_code}")
+                line_count = 0
+                async for line in response.aiter_lines():
+                    line_count += 1
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            token = data.get("response", "")
+                            done = data.get("done", False)
+                            done_reason = data.get("done_reason", "")
+                            
+                            if done:
+                                print(f"✅ Stream done: reason={done_reason}, lines={line_count}")
+                            
+                            if token:
+                                yield token
+                        except json.JSONDecodeError as e:
+                            print(f"⚠️ JSON decode error: {e}, line: {line[:100]}")
+                            continue
+                
+                print(f"📊 Total lines received: {line_count}")
+                
+        except Exception as e:
+            print(f"❌ stream_detect_live error: {e}")
+            import traceback
+            traceback.print_exc()
+            yield f'{{"error": "{str(e)}"}}'
+        finally:
+            self._is_processing = False
+            print(f"🎬 stream_detect_live finished, _is_processing reset to False")
     
     async def detect_object(self, image_bytes: bytes) -> dict:
         """Detect object, brand, model, and condition from image"""
@@ -137,11 +294,15 @@ OUTPUT JSON ONLY:
         }
     
     async def _generate(self, prompt: str, images: list[bytes]) -> str:
-        """Send request using reusable HTTP client for speed"""
+        """Send request using reusable HTTP client for speed - with VRAM-safe options"""
         try:
             # Convert images to base64
             images_b64 = [base64.b64encode(img).decode('utf-8') for img in images]
             
+            print(f"🔍 _generate called: {len(images)} images, prompt length: {len(prompt)}")
+            print(f"🔍 Image sizes (base64): {[len(i) for i in images_b64]}")
+            
+            # NO options = use Ollama defaults (no token limits)
             payload = {
                 "model": self.model,
                 "prompt": prompt,
@@ -150,19 +311,53 @@ OUTPUT JSON ONLY:
             }
             
             client = await self.get_client()
+            print(f"🔍 Sending request to {self.host}/api/generate...")
             response = await client.post(
                 f"{self.host}/api/generate",
                 json=payload
             )
+            print(f"🔍 Response status: {response.status_code}")
             response.raise_for_status()
-            result = response.json().get('response', '')
-            print(f"Ollama raw response length: {len(result)} chars")
+            
+            response_data = response.json()
+            result = response_data.get('response', '')
+            done_reason = response_data.get('done_reason', 'unknown')
+            print(f"Ollama raw response length: {len(result)} chars, done_reason: {done_reason}")
+            
+            # If response is empty but thinking exists, extract it
+            if not result and response_data.get('thinking'):
+                print(f"🔍 Thinking found: {response_data.get('thinking', '')[:200]}")
+            
             return result
+        except httpx.HTTPStatusError as e:
+            print(f"Ollama HTTP error: {e}")
+            raise
         except Exception as e:
             print(f"Ollama generate error: {e}")
             import traceback
             traceback.print_exc()
             return ""
+    
+    async def _generate_live(self, prompt: str, images: list[bytes]) -> str:
+        """Optimized generation for live video - non-streaming for simpler parsing"""
+        try:
+            images_b64 = [base64.b64encode(img).decode('utf-8') for img in images]
+            
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "images": images_b64,
+                "stream": False,
+                "options": self._live_inference_options  # Use live options for speed
+            }
+            
+            client = await self.get_client()
+            response = await client.post(f"{self.host}/api/generate", json=payload)
+            response.raise_for_status()
+            return response.json().get('response', '')
+        except Exception as e:
+            print(f"Live generate error: {e}")
+            return '{"error": "' + str(e) + '"}'
     
     async def chat_response(self, user_message: str, context: dict = None) -> str:
         """Generate a conversational response based on context"""

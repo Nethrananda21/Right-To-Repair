@@ -7,6 +7,7 @@ import ChatInput from "@/components/ChatInput";
 import UserMessage from "@/components/UserMessage";
 import AIMessage from "@/components/AIMessage";
 import DetectionConfirm from "@/components/DetectionConfirm";
+import LiveVideoAnalysis from "@/components/LiveVideoAnalysis";
 import {
   getSessions,
   createSession,
@@ -41,6 +42,9 @@ export default function Home() {
   
   // Sidebar state
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
+  // Live video mode
+  const [isLiveMode, setIsLiveMode] = useState(false);
   
   // Session state
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -154,6 +158,47 @@ export default function Home() {
     document.documentElement.classList.toggle("dark");
   };
 
+  // Handle live detection completion
+  const handleLiveDetectionComplete = async (detectionResult: DetectionData) => {
+    // Save detection to session
+    setDetectedItem(detectionResult);
+    
+    // Add detection message
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: "[Live video analysis]",
+    };
+    setMessages((prev) => [...prev, userMessage]);
+
+    // Show detection
+    const detectionMessage: ChatMessage = {
+      id: `ai-${Date.now()}`,
+      role: "assistant",
+      content: `I identified this as a **${detectionResult.brand ? detectionResult.brand + " " : ""}${detectionResult.object}**.\n\n**Condition:** ${detectionResult.condition}\n\nIssues detected:\n${detectionResult.issues?.map((i) => `• ${i}`).join("\n")}\n\nWould you like me to search for repair guides and spare parts?`,
+      responseType: "detection",
+      data: detectionResult,
+    };
+    setMessages((prev) => [...prev, detectionMessage]);
+
+    // Exit live mode
+    setIsLiveMode(false);
+  };
+
+  // Show live video component if in live mode
+  if (isLiveMode) {
+    if (!currentSessionId) {
+      handleNewSession();
+      return null;
+    }
+    return (
+      <LiveVideoAnalysis
+        sessionId={currentSessionId}
+        onDetectionComplete={handleLiveDetectionComplete}
+      />
+    );
+  }
+
   // Handle detection confirmation - user confirms/edits details and searches
   const handleConfirmDetection = async (confirmedData: DetectionData) => {
     if (!pendingDetection) return;
@@ -164,6 +209,7 @@ export default function Home() {
     // First, update the detected item in the database so searches use the corrected info
     try {
       await updateDetectedItem(pendingDetection.sessionId, confirmedData);
+
     } catch (error) {
       console.error("Failed to update detected item:", error);
     }
@@ -396,10 +442,26 @@ export default function Home() {
         </div>
 
         {/* Input */}
-        <ChatInput
-          onSendMessage={handleSendMessage}
-          isLoading={isLoading}
-        />
+        <div className="relative">
+          {/* Live Video Toggle Button */}
+          <button
+            onClick={() => {
+              if (!currentSessionId) {
+                handleNewSession();
+              }
+              setIsLiveMode(true);
+            }}
+            className="absolute right-4 -top-12 md:-top-14 px-4 py-2 bg-gradient-to-r from-[var(--terracotta)] to-orange-500 hover:from-[var(--terracotta)]/90 hover:to-orange-500/90 text-white text-sm font-medium rounded-full shadow-lg transition-all duration-300 flex items-center gap-2 z-50"
+          >
+            <span className="material-symbols-outlined text-lg">videocam</span>
+            Live
+          </button>
+          
+          <ChatInput
+            onSendMessage={handleSendMessage}
+            isLoading={isLoading}
+          />
+        </div>
       </main>
     </>
   );
