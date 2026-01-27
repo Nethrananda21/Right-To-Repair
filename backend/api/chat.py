@@ -7,8 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 from services.database import db_service
 from services.ollama_service import ollama_service
-from services.search_service import search_service
-from services.youtube_service import youtube_service
+from services.deep_search import deep_search
 import asyncio
 
 router = APIRouter()
@@ -275,57 +274,57 @@ async def send_message(
                 response_type = "text"
             
             elif wants_resources or is_simple_yes:
-                # Search for repairs
+                # Search for repairs using deep search
                 response_type = "repair_results"
                 
-                # Extract component from issues for better search targeting
-                issues = detected_item.get('issues', [])
-                component = search_service.extract_component_from_issues(issues) if issues else ""
-                
-                # Build YouTube query: prioritize component over generic object
-                # e.g., "HP screen replacement tutorial" not "HP laptop repair tutorial"
+                # Build optimized search query from detected item
                 brand = detected_item.get('brand', '')
                 model = detected_item.get('model', '')
                 obj = detected_item.get('object', '')
+                issues = detected_item.get('issues', [])
                 
-                if component:
-                    # Use specific component: "HP laptop screen replacement tutorial"
-                    youtube_query = f"{brand} {obj} {component} replacement tutorial".strip()
-                else:
-                    # Fallback: use first issue
-                    first_issue = issues[0] if issues else ""
-                    youtube_query = f"{brand} {model} {obj} {first_issue} repair tutorial".strip()
+                # Create search query
+                query_parts = []
+                if brand:
+                    query_parts.append(brand)
+                if model:
+                    query_parts.append(model)
+                if obj:
+                    query_parts.append(obj)
+                if issues:
+                    # Add first issue for specificity
+                    first_issue = issues[0]
+                    if ":" in first_issue:
+                        first_issue = first_issue.split(":")[-1].strip()
+                    query_parts.append(first_issue)
+                query_parts.append("repair")
                 
-                print(f"YouTube search query: {youtube_query}")
-                print(f"Web search params: object={detected_item.get('object')}, brand={detected_item.get('brand')}, model={detected_item.get('model')}, issues={detected_item.get('issues')}")
+                search_query = " ".join(query_parts)
+                context = f"Issues: {', '.join(issues)}" if issues else None
                 
-                # Run searches concurrently
-                youtube_task = youtube_service.search_tutorials(youtube_query, max_results=4)
-                web_task = search_service.search_repair_guides(
-                    detected_item.get('object', ''),
-                    detected_item.get('brand', ''),
-                    detected_item.get('model', ''),
-                    detected_item.get('issues', []),
-                    max_results=5
-                )
-                parts_task = search_service.search_spare_parts(
-                    detected_item.get('object', ''),
-                    detected_item.get('brand', ''),
-                    detected_item.get('model', ''),
-                    issues=detected_item.get('issues', []),
-                    max_results=4
-                )
+                print(f"Deep search query: {search_query}")
+                print(f"Context: {context}")
                 
-                youtube_results, web_results, parts_results = await asyncio.gather(
-                    youtube_task, web_task, parts_task
-                )
+                # Run deep search across Reddit, Forums, and YouTube
+                search_results = await deep_search({
+                    "query": search_query,
+                    "context": context,
+                    "sources": ["reddit", "forums", "youtube"],
+                    "max_results": 8
+                })
                 
-                print(f"Search results: YouTube={len(youtube_results)}, Web={len(web_results)}, Parts={len(parts_results)}")
+                reddit_results = search_results.get("results", {}).get("reddit", [])
+                forum_results = search_results.get("results", {}).get("forums", [])
+                youtube_results = search_results.get("results", {}).get("youtube", [])
+                
+                print(f"Deep search results: Reddit={len(reddit_results)}, Forums={len(forum_results)}, YouTube={len(youtube_results)}")
+                print(f"Search completed in {search_results.get('search_time_ms', 0):.0f}ms")
                 
                 response_data = {
                     "youtube": youtube_results,
-                    "web": web_results,
-                    "parts": parts_results
+                    "web": forum_results,  # Keep "web" key for frontend compatibility
+                    "reddit": reddit_results,
+                    "search_time_ms": search_results.get("search_time_ms", 0)
                 }
                 
                 ai_message = "Here's what I found to help you repair your item:\n\n"
@@ -334,21 +333,21 @@ async def send_message(
                     ai_message += f"📺 **{len(youtube_results)} Video Tutorials**\n"
                     cards.append({
                         "type": "youtube_card",
-                        "data": youtube_results[:3]
+                        "data": youtube_results[:4]
                     })
                 
-                if web_results:
-                    ai_message += f"📖 **{len(web_results)} Repair Guides**\n"
+                if forum_results:
+                    ai_message += f"📖 **{len(forum_results)} Repair Guides & Articles**\n"
                     cards.append({
                         "type": "guides_card",
-                        "data": web_results[:3]
+                        "data": forum_results[:4]
                     })
                 
-                if parts_results:
-                    ai_message += f"🛒 **{len(parts_results)} Spare Parts**\n"
+                if reddit_results:
+                    ai_message += f"💬 **{len(reddit_results)} Reddit Discussions**\n"
                     cards.append({
-                        "type": "parts_card",
-                        "data": parts_results[:3]
+                        "type": "reddit_card",
+                        "data": reddit_results[:4]
                     })
                 
                 ai_message += "\nClick on any card to learn more. Need help with something specific?"

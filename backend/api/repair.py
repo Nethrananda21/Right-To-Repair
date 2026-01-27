@@ -1,12 +1,12 @@
 """
 Repair API Routes - Search for repair guides, tutorials, and parts
+Uses Deep Search for comprehensive results from Reddit, Forums, and YouTube
 """
 import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from services.youtube_service import youtube_service
-from services.search_service import search_service
+from services.deep_search import deep_search
 from services.guide_extractor import guide_extractor
 
 router = APIRouter()
@@ -22,9 +22,9 @@ class RepairSearchRequest(BaseModel):
 class RepairSearchResponse(BaseModel):
     youtube: list
     web: list
-    ifixit: list
-    parts: list = []
+    reddit: list = []
     query_used: str
+    search_time_ms: float = 0.0
 
 
 class TranscriptRequest(BaseModel):
@@ -45,49 +45,42 @@ class ExtractRequest(BaseModel):
 @router.post("/search", response_model=RepairSearchResponse)
 async def search_repairs(request: RepairSearchRequest):
     """
-    Search for repair guides from YouTube, web, iFixit, and spare parts concurrently.
+    Search for repair guides from Reddit, Forums, and YouTube using Deep Search.
     """
     try:
-        # Build search query
-        query = search_service.build_repair_query(
-            request.object,
-            request.brand,
-            request.model,
-            request.issues
-        )
+        # Build search query from request
+        query_parts = []
+        if request.brand:
+            query_parts.append(request.brand)
+        if request.model:
+            query_parts.append(request.model)
+        if request.object:
+            query_parts.append(request.object)
+        if request.issues:
+            # Add first issue for specificity
+            first_issue = request.issues[0]
+            if ":" in first_issue:
+                first_issue = first_issue.split(":")[-1].strip()
+            query_parts.append(first_issue)
+        query_parts.append("repair")
         
-        # Create tasks for parallel execution
-        youtube_task = youtube_service.search_tutorials(f"{query} tutorial", max_results=5)
-        web_task = search_service.search_repair_guides(
-            request.object,
-            request.brand,
-            request.model,
-            request.issues,
-            max_results=8
-        )
-        ifixit_task = search_service.search_ifixit(
-            request.object,
-            request.brand,
-            request.model
-        )
-        parts_task = search_service.search_spare_parts(
-            request.object,
-            request.brand,
-            request.model,
-            max_results=6
-        )
+        search_query = " ".join(query_parts)
+        context = f"Issues: {', '.join(request.issues)}" if request.issues else None
         
-        # Run all searches concurrently
-        youtube_results, web_results, ifixit_results, parts_results = await asyncio.gather(
-            youtube_task, web_task, ifixit_task, parts_task
-        )
+        # Run deep search
+        results = await deep_search({
+            "query": search_query,
+            "context": context,
+            "sources": ["reddit", "forums", "youtube"],
+            "max_results": 10
+        })
         
         return RepairSearchResponse(
-            youtube=youtube_results,
-            web=web_results,
-            ifixit=ifixit_results,
-            parts=parts_results,
-            query_used=query
+            youtube=results.get("results", {}).get("youtube", []),
+            web=results.get("results", {}).get("forums", []),
+            reddit=results.get("results", {}).get("reddit", []),
+            query_used=search_query,
+            search_time_ms=results.get("search_time_ms", 0)
         )
         
     except Exception as e:
@@ -96,28 +89,18 @@ async def search_repairs(request: RepairSearchRequest):
 
 @router.post("/transcript", response_model=TranscriptResponse)
 async def get_video_transcript(request: TranscriptRequest):
-    """Get video info and AI-generated summary."""
+    """Get video info and transcript."""
     try:
-        video_info = await youtube_service.get_video_info(request.video_id)
+        from services.deep_search.youtube_search import YouTubeSearch
         
-        if not video_info:
-            raise HTTPException(status_code=404, detail="Video not found")
-        
-        transcript = await youtube_service.get_transcript(request.video_id)
-        content = transcript or video_info.get("description", "")
-        
-        summary = ""
-        if content:
-            summary = await youtube_service.summarize_for_repair(
-                video_info.get("title", ""),
-                content
-            )
+        youtube = YouTubeSearch()
+        transcript = await youtube._get_transcript(request.video_id)
         
         return TranscriptResponse(
             video_id=request.video_id,
-            title=video_info.get("title", ""),
-            description=video_info.get("description", "")[:500],
-            summary=summary
+            title="",  # Would need separate API call for title
+            description="",
+            summary=transcript[:1000] if transcript else "No transcript available"
         )
         
     except HTTPException:
@@ -150,16 +133,28 @@ async def extract_guide(request: ExtractRequest):
 
 @router.post("/parts")
 async def search_parts(request: RepairSearchRequest):
-    """Search for replacement parts."""
+    """Search for replacement parts using deep search."""
     try:
-        results = await search_service.search_spare_parts(
-            request.object,
-            request.brand,
-            request.model,
-            max_results=10
-        )
+        # Build parts-specific query
+        query_parts = []
+        if request.brand:
+            query_parts.append(request.brand)
+        if request.model:
+            query_parts.append(request.model)
+        if request.object:
+            query_parts.append(request.object)
+        query_parts.append("replacement parts buy")
         
-        return {"parts": results}
+        search_query = " ".join(query_parts)
+        
+        # Use forums search for parts (includes eBay, Amazon links)
+        results = await deep_search({
+            "query": search_query,
+            "sources": ["forums"],
+            "max_results": 10
+        })
+        
+        return {"parts": results.get("results", {}).get("forums", [])}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Parts search failed: {str(e)}")
