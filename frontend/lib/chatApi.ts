@@ -119,6 +119,23 @@ export async function updateDetectedItem(
   if (!response.ok) throw new Error("Failed to update detected item");
 }
 
+// Save a message to a session (for live video detection)
+export async function saveMessage(
+  sessionId: string,
+  role: "user" | "assistant",
+  content: string,
+  metadata?: { response_type?: string; data?: unknown }
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ role, content, metadata }),
+  });
+  if (!response.ok) throw new Error("Failed to save message");
+}
+
 // ============== Chat API ==============
 
 export async function sendMessage(

@@ -118,6 +118,30 @@ async def update_detected_item(session_id: str, request: UpdateDetectedItemReque
     return {"status": "updated", "data": detection_data}
 
 
+class SaveMessageRequest(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+    metadata: Optional[dict] = None
+
+
+@router.post("/sessions/{session_id}/messages")
+async def save_message(session_id: str, request: SaveMessageRequest):
+    """Save a message to a session (used for live video detection)"""
+    # Verify session exists
+    session = await db_service.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    await db_service.add_message(
+        session_id=session_id,
+        role=request.role,
+        content=request.content,
+        metadata=request.metadata
+    )
+    
+    return {"status": "saved"}
+
+
 # ============== CHAT ENDPOINT ==============
 
 @router.post("/message")

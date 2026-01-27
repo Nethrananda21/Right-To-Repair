@@ -335,7 +335,7 @@ export default function LiveVideoAnalysis({
                 Analysis Complete
               </h2>
               <p className="text-sm text-[var(--earth-muted)]">
-                Confidence: {confidence}%
+                Confidence: {Math.round(confidence * 100)}%
               </p>
             </div>
 
@@ -371,28 +371,44 @@ export default function LiveVideoAnalysis({
             </div>
 
             {/* Actions */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-3">
+              {/* Primary action - Continue to edit/confirm and search */}
               <button
-                onClick={handleRetry}
-                className="px-4 py-2 bg-[var(--soft-sage)] hover:bg-[var(--soft-sage)]/80 text-[var(--earth-dark)] font-medium rounded-full transition-all"
+                onClick={() => onDetectionComplete?.(detectionResult)}
+                className="w-full px-6 py-3 bg-[var(--terracotta)] hover:bg-[var(--terracotta)]/90 text-white font-semibold rounded-full transition-all duration-300 shadow-md"
               >
                 <span className="flex items-center justify-center gap-2">
                   <span className="material-symbols-outlined text-lg">
-                    restart_alt
+                    edit_note
                   </span>
-                  Retry
+                  Continue to Edit & Find Repairs
                 </span>
               </button>
+              
+              {/* Secondary actions */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={handleRetry}
+                  className="px-4 py-2 bg-[var(--soft-sage)] hover:bg-[var(--soft-sage)]/80 text-[var(--earth-dark)] font-medium rounded-full transition-all"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="material-symbols-outlined text-lg">
+                      restart_alt
+                    </span>
+                    Retry
+                  </span>
+                </button>
 
-              <button
-                onClick={() => setMode('setup')}
-                className="px-4 py-2 bg-[var(--delicate-gold)]/30 hover:bg-[var(--delicate-gold)]/50 text-[var(--earth-dark)] font-medium rounded-full transition-all"
-              >
-                <span className="flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-lg">close</span>
-                  Done
-                </span>
-              </button>
+                <button
+                  onClick={() => setMode('setup')}
+                  className="px-4 py-2 bg-[var(--delicate-gold)]/30 hover:bg-[var(--delicate-gold)]/50 text-[var(--earth-dark)] font-medium rounded-full transition-all"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="material-symbols-outlined text-lg">close</span>
+                    Cancel
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

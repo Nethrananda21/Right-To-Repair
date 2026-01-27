@@ -15,6 +15,7 @@ import {
   sendMessage,
   deleteSession,
   updateDetectedItem,
+  saveMessage,
   Session,
   Message,
   ChatResponse,
@@ -160,29 +161,40 @@ export default function Home() {
 
   // Handle live detection completion
   const handleLiveDetectionComplete = async (detectionResult: DetectionData) => {
-    // Save detection to session
-    setDetectedItem(detectionResult);
+    // Exit live mode first
+    setIsLiveMode(false);
     
-    // Add detection message
+    // Create a new session if needed
+    let sessionId = currentSessionId;
+    if (!sessionId) {
+      const session = await createSession();
+      setSessions((prev) => [session, ...prev]);
+      setCurrentSessionId(session.id);
+      sessionId = session.id;
+    }
+    
+    // Add user message for live analysis
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
       content: "[Live video analysis]",
     };
     setMessages((prev) => [...prev, userMessage]);
-
-    // Show detection
-    const detectionMessage: ChatMessage = {
-      id: `ai-${Date.now()}`,
-      role: "assistant",
-      content: `I identified this as a **${detectionResult.brand ? detectionResult.brand + " " : ""}${detectionResult.object}**.\n\n**Condition:** ${detectionResult.condition}\n\nIssues detected:\n${detectionResult.issues?.map((i) => `• ${i}`).join("\n")}\n\nWould you like me to search for repair guides and spare parts?`,
-      responseType: "detection",
+    
+    // Save user message to database
+    try {
+      await saveMessage(sessionId, "user", "[Live video analysis]");
+    } catch (error) {
+      console.error("Failed to save live detection user message:", error);
+    }
+    
+    // Show detection confirmation dialog (same as image upload flow)
+    // This allows user to edit before searching for repair solutions
+    setPendingDetection({
       data: detectionResult,
-    };
-    setMessages((prev) => [...prev, detectionMessage]);
-
-    // Exit live mode
-    setIsLiveMode(false);
+      imageUrl: undefined, // No image URL for live video
+      sessionId: sessionId,
+    });
   };
 
   // Show live video component if in live mode
@@ -214,16 +226,29 @@ export default function Home() {
       console.error("Failed to update detected item:", error);
     }
     
+    // Build the detection message content
+    const detectionContent = `I identified this as a **${confirmedData.brand ? confirmedData.brand + " " : ""}${confirmedData.object}${confirmedData.model ? ` (${confirmedData.model})` : ""}**.\n\n**Condition:** ${confirmedData.condition}\n\n${confirmedData.issues.length > 0 ? "**Issues:**\n" + confirmedData.issues.map(i => `• ${i}`).join("\n") : ""}`;
+    
     // Add the detection message to chat
     const detectionMessage: ChatMessage = {
       id: `ai-${Date.now()}`,
       role: "assistant",
-      content: `I identified this as a **${confirmedData.brand ? confirmedData.brand + " " : ""}${confirmedData.object}${confirmedData.model ? ` (${confirmedData.model})` : ""}**.\n\n**Condition:** ${confirmedData.condition}\n\n${confirmedData.issues.length > 0 ? "**Issues:**\n" + confirmedData.issues.map(i => `• ${i}`).join("\n") : ""}`,
+      content: detectionContent,
       responseType: "detection",
       data: confirmedData,
       imageUrl: pendingDetection.imageUrl,
     };
     setMessages((prev) => [...prev, detectionMessage]);
+    
+    // Save the detection message to database (especially important for live video where it's not auto-saved)
+    try {
+      await saveMessage(pendingDetection.sessionId, "assistant", detectionContent, {
+        response_type: "detection",
+        data: confirmedData
+      });
+    } catch (error) {
+      console.error("Failed to save detection message:", error);
+    }
     
     // Clear pending detection
     setPendingDetection(null);
