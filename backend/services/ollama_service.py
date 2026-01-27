@@ -23,7 +23,7 @@ class OllamaService:
         # Options for LIVE video ONLY (faster, restricted for real-time)
         self._live_inference_options = {
             "num_ctx": 2048,      # Smaller context for speed
-            "num_predict": 500,   # Limited tokens for quick response
+            "num_predict": 800,   # More tokens to ensure JSON output after thinking
             "temperature": 0.2,   # Lower for consistent JSON
             "top_p": 0.9,
             "num_gpu": 99,

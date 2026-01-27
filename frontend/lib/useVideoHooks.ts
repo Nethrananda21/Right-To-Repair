@@ -136,6 +136,17 @@ export function useVideoStream(options: VideoStreamOptions = {}) {
     return () => clearInterval(interval);
   }, [isStreaming, onFrame, frameInterval, captureFrameWithQuality, captureFrame]);
 
+  // Cleanup on unmount - ensure camera is stopped
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        console.log('📷 Cleanup: stopping camera stream');
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
   return {
     videoRef,
     canvasRef,

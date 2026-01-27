@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useVideoStream, useVisionWebSocket } from '@/lib/useVideoHooks';
 import { getQualityFeedback, FrameMetrics } from '@/lib/frameQuality';
 
@@ -31,21 +31,42 @@ export default function LiveVideoAnalysis({
         if (result.type === 'complete') {
           setDetectionResult(result.result);
           setMode('result');
-          onDetectionComplete?.(result.result);
+          // Camera will be stopped in the effect below when mode changes to 'result'
         }
       }
     }
   );
 
+  // Use refs to avoid stale closure issues
+  const isConnectedRef = useRef(isConnected);
+  const isProcessingRef = useRef(isProcessing);
+  const sendFrameRef = useRef(sendFrame);
+  
+  // Keep refs updated
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+  
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+  
+  useEffect(() => {
+    sendFrameRef.current = sendFrame;
+  }, [sendFrame]);
+
   const handleFrame = useCallback(
     (frame: string, metrics: FrameMetrics) => {
-      if (isConnected && !isProcessing) {
-        sendFrame(frame);
+      console.log('🎥 handleFrame called, isConnected:', isConnectedRef.current, 'isProcessing:', isProcessingRef.current);
+      if (isConnectedRef.current && !isProcessingRef.current) {
+        console.log('📤 Sending frame...');
+        sendFrameRef.current(frame);
+      } else {
+        console.log('⏭️ Skipping frame - connected:', isConnectedRef.current, 'processing:', isProcessingRef.current);
       }
     },
-    [isConnected, isProcessing, sendFrame]
+    [] // No dependencies - uses refs
   );
-
   const {
     videoRef,
     canvasRef,
@@ -59,6 +80,22 @@ export default function LiveVideoAnalysis({
     frameInterval: 3000,
     minQuality: 40  // Lower threshold to allow more frames through
   });
+
+  // Stop camera and websocket when detection completes
+  useEffect(() => {
+    if (mode === 'result') {
+      stopStream();
+      disconnectWs();
+    }
+  }, [mode, stopStream, disconnectWs]);
+  
+  // Cleanup on unmount only
+  useEffect(() => {
+    return () => {
+      stopStream();
+      disconnectWs();
+    };
+  }, [stopStream, disconnectWs]);
 
   const handleStart = useCallback(() => {
     startStream();
@@ -74,8 +111,17 @@ export default function LiveVideoAnalysis({
 
   const handleRetry = useCallback(() => {
     setDetectionResult(null);
+    startStream();
+    connectWs();
     setMode('streaming');
-  }, []);
+  }, [startStream, connectWs]);
+
+  // Call onDetectionComplete when result is ready (after camera stopped)
+  useEffect(() => {
+    if (mode === 'result' && detectionResult) {
+      onDetectionComplete?.(detectionResult);
+    }
+  }, [mode, detectionResult, onDetectionComplete]);
 
   // Setup phase
   if (mode === 'setup') {
