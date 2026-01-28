@@ -28,6 +28,18 @@ interface WebResult {
   source: string;
 }
 
+interface RedditResult {
+  title: string;
+  url: string;
+  content: string;
+  subreddit: string;
+  score: number;
+  num_comments: number;
+  author: string;
+  created_utc: number;
+  relevance?: number;
+}
+
 interface AIMessageProps {
   content: string;
   responseType: "text" | "detection" | "repair_results" | "clarification";
@@ -40,7 +52,7 @@ interface AIMessageProps {
     description?: string;
     youtube?: YouTubeVideo[];
     web?: WebResult[];
-    parts?: WebResult[];
+    reddit?: RedditResult[];
   };
   imageUrl?: string;
   isLoading?: boolean;
@@ -303,31 +315,40 @@ export default function AIMessage({
               </div>
             )}
 
-            {/* Spare Parts Section */}
-            {data.parts && data.parts.length > 0 && (
+            {/* Reddit Discussions Section */}
+            {data.reddit && data.reddit.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-3">
-                  <span className="material-symbols-outlined text-[var(--terracotta)]">shopping_cart</span>
-                  <h4 className="font-semibold text-[var(--earth-dark)]">Spare Parts ({data.parts.length})</h4>
+                  <span className="material-symbols-outlined text-orange-500">forum</span>
+                  <h4 className="font-semibold text-[var(--earth-dark)]">Reddit Discussions ({data.reddit.length})</h4>
                 </div>
                 <div className="space-y-2">
-                  {data.parts.map((part, idx) => (
+                  {data.reddit.map((post, idx) => (
                     <a
                       key={idx}
-                      href={part.url}
+                      href={post.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="group block p-3 rounded-xl border border-[var(--delicate-gold)]/30 bg-white/50 hover:bg-orange-50 hover:border-orange-200 transition-all duration-300"
                     >
-                      <p className="font-medium text-sm text-[var(--earth-dark)] group-hover:text-[var(--terracotta)] line-clamp-1 transition-colors">
-                        {part.title}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="bg-orange-100 text-orange-600 px-2 py-0.5 rounded text-xs font-medium">
+                          r/{post.subreddit}
+                        </span>
+                        <span className="text-xs text-[var(--earth-muted)] flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs">thumb_up</span>
+                          {post.score}
+                        </span>
+                        <span className="text-xs text-[var(--earth-muted)] flex items-center gap-1">
+                          <span className="material-symbols-outlined text-xs">chat_bubble</span>
+                          {post.num_comments}
+                        </span>
+                      </div>
+                      <p className="font-medium text-sm text-[var(--earth-dark)] group-hover:text-orange-600 line-clamp-1 transition-colors">
+                        {post.title}
                       </p>
                       <p className="text-xs text-[var(--earth-muted)] line-clamp-2 mt-1">
-                        {part.snippet}
-                      </p>
-                      <p className="text-xs text-[var(--terracotta)] mt-1 flex items-center gap-1">
-                        <span className="material-symbols-outlined text-xs">storefront</span>
-                        {part.source}
+                        {post.content}
                       </p>
                     </a>
                   ))}

@@ -1,34 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import { YouTubeResult, WebResult, getVideoSummary, extractGuide } from "@/lib/api";
+import { YouTubeResult, WebResult, RedditResult, getVideoSummary, extractGuide } from "@/lib/api";
 
 interface RepairResultsProps {
   youtube: YouTubeResult[];
   web: WebResult[];
-  ifixit: WebResult[];
-  parts: WebResult[];
+  reddit?: RedditResult[];
   queryUsed: string;
+  searchTimeMs?: number;
 }
 
-type Tab = "youtube" | "web" | "ifixit" | "parts";
+type Tab = "youtube" | "web" | "reddit";
 
 export default function RepairResults({
   youtube,
   web,
-  ifixit,
-  parts,
+  reddit = [],
   queryUsed,
+  searchTimeMs,
 }: RepairResultsProps) {
   const [activeTab, setActiveTab] = useState<Tab>("youtube");
   const [loadingSummary, setLoadingSummary] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
 
-  const tabs: { id: Tab; label: string; count: number }[] = [
-    { id: "youtube", label: "YouTube", count: youtube.length },
-    { id: "web", label: "Web Guides", count: web.length },
-    { id: "ifixit", label: "iFixit", count: ifixit.length },
-    { id: "parts", label: "Spare Parts", count: parts.length },
+  const tabs: { id: Tab; label: string; count: number; icon: string }[] = [
+    { id: "youtube", label: "Videos", count: youtube.length, icon: "📺" },
+    { id: "web", label: "Guides", count: web.length, icon: "📖" },
+    { id: "reddit", label: "Reddit", count: reddit.length, icon: "💬" },
   ];
 
   const handleGetSummary = async (videoId: string) => {
@@ -55,7 +54,7 @@ export default function RepairResults({
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-6 flex-wrap">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -66,11 +65,7 @@ export default function RepairResults({
                 : "bg-gray-700 text-gray-300 hover:bg-gray-600"
             }`}
           >
-            {tab.id === "youtube" && (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z" />
-              </svg>
-            )}
+            <span>{tab.icon}</span>
             {tab.label}
             <span className="bg-black/20 px-2 py-0.5 rounded text-xs">
               {tab.count}
@@ -78,6 +73,13 @@ export default function RepairResults({
           </button>
         ))}
       </div>
+
+      {/* Search Info */}
+      {searchTimeMs && (
+        <div className="text-xs text-gray-500 mb-4">
+          Search completed in {searchTimeMs}ms
+        </div>
+      )}
 
       {/* YouTube Tab */}
       {activeTab === "youtube" && (
@@ -183,40 +185,13 @@ export default function RepairResults({
         </div>
       )}
 
-      {/* iFixit Tab */}
-      {activeTab === "ifixit" && (
+      {/* iFixit Tab - Replaced with Reddit */}
+      {activeTab === "reddit" && (
         <div className="space-y-3">
-          {ifixit.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">No iFixit guides found</p>
+          {reddit.length === 0 ? (
+            <p className="text-gray-400 text-center py-8">No Reddit discussions found</p>
           ) : (
-            ifixit.map((result, index) => (
-              <a
-                key={index}
-                href={result.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block bg-gray-900/50 rounded-xl p-4 hover:bg-gray-900/70 transition-colors border border-green-500/20"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-xs font-medium">
-                    iFixit
-                  </span>
-                </div>
-                <h3 className="text-white font-medium line-clamp-2">{result.title}</h3>
-                <p className="text-sm text-gray-400 mt-2 line-clamp-2">{result.snippet}</p>
-              </a>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Spare Parts Tab */}
-      {activeTab === "parts" && (
-        <div className="space-y-3">
-          {parts.length === 0 ? (
-            <p className="text-gray-400 text-center py-8">No spare parts found</p>
-          ) : (
-            parts.map((result, index) => (
+            reddit.map((result, index) => (
               <a
                 key={index}
                 href={result.url}
@@ -226,12 +201,36 @@ export default function RepairResults({
               >
                 <div className="flex items-center gap-2 mb-2">
                   <span className="bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded text-xs font-medium">
-                    🛒 Parts
+                    r/{result.subreddit}
                   </span>
-                  <span className="text-xs text-gray-500">{result.source}</span>
+                  <span className="text-xs text-gray-500 flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
+                    </svg>
+                    {result.score}
+                  </span>
+                  <span className="text-xs text-gray-500 flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 5v8a2 2 0 01-2 2h-5l-5 4v-4H4a2 2 0 01-2-2V5a2 2 0 012-2h12a2 2 0 012 2zM7 8H5v2h2V8zm2 0h2v2H9V8zm6 0h-2v2h2V8z" clipRule="evenodd" />
+                    </svg>
+                    {result.num_comments} comments
+                  </span>
                 </div>
                 <h3 className="text-white font-medium line-clamp-2">{result.title}</h3>
-                <p className="text-sm text-gray-400 mt-2 line-clamp-2">{result.snippet}</p>
+                <p className="text-sm text-gray-400 mt-2 line-clamp-3">{result.content}</p>
+                {result.relevance && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-1.5 flex-1 bg-gray-700 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-gradient-to-r from-orange-500 to-red-500 rounded-full"
+                        style={{ width: `${result.relevance * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {Math.round(result.relevance * 100)}% relevant
+                    </span>
+                  </div>
+                )}
               </a>
             ))
           )}

@@ -30,12 +30,24 @@ export interface WebResult {
   source: string;
 }
 
+export interface RedditResult {
+  title: string;
+  url: string;
+  content: string;
+  subreddit: string;
+  score: number;
+  num_comments: number;
+  author: string;
+  created_utc: number;
+  relevance?: number;
+}
+
 export interface RepairSearchResponse {
   youtube: YouTubeResult[];
   web: WebResult[];
-  ifixit: WebResult[];
-  parts: WebResult[];
+  reddit: RedditResult[];
   query_used: string;
+  search_time_ms?: number;
 }
 
 export async function detectFull(

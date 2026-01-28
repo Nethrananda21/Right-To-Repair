@@ -37,6 +37,8 @@ export interface YouTubeResult {
   views: string;
   thumbnail: string;
   url: string;
+  transcript?: string;
+  relevance?: number;
 }
 
 export interface WebResult {
@@ -44,6 +46,19 @@ export interface WebResult {
   url: string;
   snippet: string;
   source: string;
+  relevance?: number;
+}
+
+export interface RedditResult {
+  title: string;
+  url: string;
+  content: string;
+  subreddit: string;
+  score: number;
+  num_comments: number;
+  author?: string;
+  created_utc?: number;
+  relevance?: number;
 }
 
 export interface ChatResponse {
@@ -59,7 +74,8 @@ export interface ChatResponse {
     description?: string;
     youtube?: YouTubeResult[];
     web?: WebResult[];
-    parts?: WebResult[];
+    reddit?: RedditResult[];
+    search_time_ms?: number;
   };
   cards?: Array<{
     type: string;
