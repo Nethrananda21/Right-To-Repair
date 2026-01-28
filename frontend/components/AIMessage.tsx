@@ -1,6 +1,7 @@
 "use client";
 
 import ReactMarkdown from "react-markdown";
+import type { YouTubeResult, WebResult, RedditResult } from "@/lib/chatApi";
 
 interface DetectionData {
   object: string;
@@ -19,25 +20,6 @@ interface YouTubeVideo {
   views: string;
   thumbnail: string;
   url: string;
-}
-
-interface WebResult {
-  title: string;
-  url: string;
-  snippet: string;
-  source: string;
-}
-
-interface RedditResult {
-  title: string;
-  url: string;
-  content: string;
-  subreddit: string;
-  score: number;
-  num_comments: number;
-  author: string;
-  created_utc: number;
-  relevance?: number;
 }
 
 interface AIMessageProps {

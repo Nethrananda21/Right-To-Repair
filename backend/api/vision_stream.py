@@ -92,36 +92,11 @@ class LiveVisionStream:
             })
             print(f"🚀 Starting Ollama analysis...")
             
-            # Stream detection using async generator - collects tokens into full JSON
-            response_text = ""
+            # Use NON-STREAMING detection (streaming has issues with empty think tokens)
+            print(f"📡 Calling ollama_service.detect_object_live...")
+            full_result = await ollama_service.detect_object_live(frame_bytes)
             
-            print(f"📡 Calling ollama_service.stream_detect_live...")
-            async for token in ollama_service.stream_detect_live(frame_bytes):
-                # Each yield is a string token
-                response_text += token
-                print(f"🔤 Token: {token[:20] if len(token) > 20 else token}")
-                
-                # Send partial token to client for streaming display
-                await self.send_json(client_id, {
-                    "type": "token",
-                    "token": token,
-                    "partial": response_text
-                })
-            
-            print(f"📝 Full response: {response_text[:200]}")
-            
-            # Parse the complete response as JSON
-            try:
-                # Clean up response - find JSON
-                json_start = response_text.find('{')
-                json_end = response_text.rfind('}') + 1
-                if json_start != -1 and json_end > json_start:
-                    json_str = response_text[json_start:json_end]
-                    full_result = json.loads(json_str)
-                else:
-                    full_result = {"error": "No JSON in response", "raw": response_text[:200]}
-            except json.JSONDecodeError:
-                full_result = {"error": "Invalid JSON", "raw": response_text[:200]}
+            print(f"📝 Detection result: {full_result}")
             
             # Check for skipped frame
             if full_result.get("skipped"):
@@ -139,23 +114,25 @@ class LiveVisionStream:
                 })
                 return
             
-            # Get confidence
-            confidence = full_result.get("confidence", 0)
+            # Check if we have valid detection data (object identified with issues or description)
+            has_valid_detection = (
+                full_result.get("object") and 
+                full_result.get("object") != "unknown" and
+                (full_result.get("issues") or full_result.get("description"))
+            )
+            
+            # Get confidence (optional - many results don't include it)
+            confidence = full_result.get("confidence", 0.8 if has_valid_detection else 0)
             if isinstance(confidence, str):
                 try:
                     confidence = float(confidence)
                 except:
-                    confidence = 0
+                    confidence = 0.8 if has_valid_detection else 0
             
             confidence_pct = int(confidence * 100) if confidence <= 1 else int(confidence)
             
-            if confidence_pct < 50:
-                await self.send_json(client_id, {
-                    "type": "low_confidence",
-                    "confidence": confidence_pct,
-                    "message": "Detection confidence too low, try better lighting/angle"
-                })
-            else:
+            # Accept detection if we have valid data OR confidence is high enough
+            if has_valid_detection or confidence_pct >= 50:
                 # Save to database if session provided
                 if session_id:
                     try:
@@ -164,10 +141,18 @@ class LiveVisionStream:
                     except Exception as e:
                         print(f"Database save error: {e}")
                 
+                print(f"📤 Sending complete message with result")
                 await self.send_json(client_id, {
                     "type": "complete",
                     "result": full_result,
                     "confidence": confidence_pct
+                })
+            else:
+                print(f"⚠️ Low confidence ({confidence_pct}%) and no valid detection data")
+                await self.send_json(client_id, {
+                    "type": "low_confidence",
+                    "confidence": confidence_pct,
+                    "message": "Detection confidence too low, try better lighting/angle"
                 })
         
         except Exception as e:

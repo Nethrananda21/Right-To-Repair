@@ -68,6 +68,18 @@ class DatabaseService:
                 )
             """)
             
+            # Conversation context table (key facts, not full history)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_context (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+                    key_facts TEXT DEFAULT '[]',
+                    decisions_made TEXT DEFAULT '[]',
+                    topics_discussed TEXT DEFAULT '[]',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             await db.commit()
         
         self._initialized = True
@@ -228,6 +240,90 @@ class DatabaseService:
                     item['issues'] = json.loads(item['issues'])
                 return item
             return None
+    
+    async def get_recent_messages(self, session_id: str, limit: int = 6) -> list:
+        """Get last N messages for sliding window context (efficient)"""
+        await self.initialize()
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT role, content FROM messages 
+                   WHERE session_id = ? AND content NOT LIKE '[Image%]'
+                   ORDER BY created_at DESC LIMIT ?""",
+                (session_id, limit)
+            )
+            rows = await cursor.fetchall()
+            # Reverse to get chronological order
+            return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+    
+    async def get_conversation_context(self, session_id: str) -> Optional[dict]:
+        """Get stored conversation context (key facts)"""
+        await self.initialize()
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM conversation_context WHERE session_id = ?",
+                (session_id,)
+            )
+            row = await cursor.fetchone()
+            if row:
+                ctx = dict(row)
+                ctx['key_facts'] = json.loads(ctx.get('key_facts', '[]'))
+                ctx['decisions_made'] = json.loads(ctx.get('decisions_made', '[]'))
+                ctx['topics_discussed'] = json.loads(ctx.get('topics_discussed', '[]'))
+                return ctx
+            return None
+    
+    async def update_conversation_context(
+        self,
+        session_id: str,
+        key_fact: Optional[str] = None,
+        decision: Optional[str] = None,
+        topic: Optional[str] = None
+    ):
+        """Update conversation context with new facts (append-only, no LLM needed)"""
+        await self.initialize()
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            # Get existing or create new
+            cursor = await db.execute(
+                "SELECT key_facts, decisions_made, topics_discussed FROM conversation_context WHERE session_id = ?",
+                (session_id,)
+            )
+            row = await cursor.fetchone()
+            
+            if row:
+                key_facts = json.loads(row[0] or '[]')
+                decisions = json.loads(row[1] or '[]')
+                topics = json.loads(row[2] or '[]')
+            else:
+                key_facts, decisions, topics = [], [], []
+            
+            # Append new items (keep last 10 of each to limit size)
+            if key_fact and key_fact not in key_facts:
+                key_facts.append(key_fact)
+                key_facts = key_facts[-10:]
+            if decision and decision not in decisions:
+                decisions.append(decision)
+                decisions = decisions[-10:]
+            if topic and topic not in topics:
+                topics.append(topic)
+                topics = topics[-10:]
+            
+            # Upsert
+            await db.execute(
+                """INSERT INTO conversation_context (id, session_id, key_facts, decisions_made, topics_discussed, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(session_id) DO UPDATE SET
+                   key_facts = excluded.key_facts,
+                   decisions_made = excluded.decisions_made,
+                   topics_discussed = excluded.topics_discussed,
+                   updated_at = excluded.updated_at""",
+                (str(uuid.uuid4()), session_id, json.dumps(key_facts), json.dumps(decisions), json.dumps(topics), datetime.now().isoformat())
+            )
+            await db.commit()
 
 
 # Singleton instance

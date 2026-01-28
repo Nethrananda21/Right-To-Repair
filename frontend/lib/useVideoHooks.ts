@@ -222,12 +222,14 @@ export function useVisionWebSocket(
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as VisionResult;
+          console.log('📩 WebSocket message received:', data.type, data);
           
           if (data.type === 'processing_started') {
             setIsProcessing(true);
           } else if (data.type === 'token' || data.type === 'partial') {
             setCurrentResult(data);
           } else if (data.type === 'complete') {
+            console.log('✅ Complete message received, calling onResult');
             setCurrentResult(data);
             setIsProcessing(false);
           } else if (data.type === 'error' || data.type === 'dropped') {

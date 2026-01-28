@@ -63,44 +63,15 @@ export default function Home() {
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize
-  useEffect(() => {
-    loadSessions();
-    
-    // Check for dark mode preference
-    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      setIsDark(true);
-      document.documentElement.classList.add("dark");
-    }
-  }, []);
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
-
   // Load sessions
   const loadSessions = async () => {
     try {
       const data = await getSessions();
       setSessions(data);
+      return data;
     } catch (error) {
       console.error("Failed to load sessions:", error);
-    }
-  };
-
-  // Create new session
-  const handleNewSession = async () => {
-    try {
-      const session = await createSession();
-      setSessions((prev) => [session, ...prev]);
-      setCurrentSessionId(session.id);
-      setMessages([]);
-      setDetectedItem(null);
-      setLastImageUrl(null);
-      setIsMobileMenuOpen(false);
-    } catch (error) {
-      console.error("Failed to create session:", error);
+      return [];
     }
   };
 
@@ -110,6 +81,9 @@ export default function Home() {
       const data = await getSessionDetails(sessionId);
       setCurrentSessionId(sessionId);
       setDetectedItem(data.detected_item || null);
+      
+      // Save to localStorage for persistence
+      localStorage.setItem("lastSessionId", sessionId);
       
       // Convert messages to chat format, preserving image_data
       const chatMessages: ChatMessage[] = data.messages.map((msg: Message) => ({
@@ -127,9 +101,57 @@ export default function Home() {
         setLastImageUrl(lastUserImage.image_data);
       }
       
+      console.log("Loaded messages:", chatMessages.length);
       setMessages(chatMessages);
     } catch (error) {
       console.error("Failed to load session:", error);
+    }
+  };
+
+  // Initialize on mount
+  useEffect(() => {
+    // Check for dark mode preference
+    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      setIsDark(true);
+      document.documentElement.classList.add("dark");
+    }
+    
+    // Load sessions first
+    loadSessions().then((loadedSessions) => {
+      // Then restore last session from localStorage
+      if (typeof window !== "undefined") {
+        const lastSessionId = localStorage.getItem("lastSessionId");
+        if (lastSessionId) {
+          // Check if session still exists in the list
+          const sessionExists = loadedSessions.some((s: Session) => s.id === lastSessionId);
+          if (sessionExists) {
+            handleSelectSession(lastSessionId);
+          } else {
+            localStorage.removeItem("lastSessionId");
+          }
+        }
+      }
+    });
+  }, []);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
+
+  // Create new session
+  const handleNewSession = async () => {
+    try {
+      const session = await createSession();
+      setSessions((prev) => [session, ...prev]);
+      setCurrentSessionId(session.id);
+      localStorage.setItem("lastSessionId", session.id);
+      setMessages([]);
+      setDetectedItem(null);
+      setLastImageUrl(null);
+      setIsMobileMenuOpen(false);
+    } catch (error) {
+      console.error("Failed to create session:", error);
     }
   };
 
@@ -170,6 +192,7 @@ export default function Home() {
       const session = await createSession();
       setSessions((prev) => [session, ...prev]);
       setCurrentSessionId(session.id);
+      localStorage.setItem("lastSessionId", session.id);
       sessionId = session.id;
     }
     
@@ -188,8 +211,38 @@ export default function Home() {
       console.error("Failed to save live detection user message:", error);
     }
     
-    // Show detection confirmation dialog (same as image upload flow)
-    // This allows user to edit before searching for repair solutions
+    // Build the detection message content immediately (no confirmation needed for display)
+    const detectionContent = `I identified this as a **${detectionResult.brand ? detectionResult.brand + " " : ""}${detectionResult.object}${detectionResult.model ? ` (${detectionResult.model})` : ""}**.\n\n**Condition:** ${detectionResult.condition}\n\n${detectionResult.issues.length > 0 ? "**Issues:**\n" + detectionResult.issues.map(i => `• ${i}`).join("\n") : ""}`;
+    
+    // Add the detection message to chat immediately
+    const detectionMessage: ChatMessage = {
+      id: `ai-${Date.now()}`,
+      role: "assistant",
+      content: detectionContent,
+      responseType: "detection",
+      data: detectionResult,
+    };
+    setMessages((prev) => [...prev, detectionMessage]);
+    
+    // Save the AI response to database immediately
+    try {
+      await saveMessage(sessionId, "assistant", detectionContent, {
+        response_type: "detection",
+        data: detectionResult
+      });
+    } catch (error) {
+      console.error("Failed to save live detection AI message:", error);
+    }
+    
+    // Update detected item in database
+    setDetectedItem(detectionResult);
+    try {
+      await updateDetectedItem(sessionId, detectionResult);
+    } catch (error) {
+      console.error("Failed to update detected item:", error);
+    }
+
+    // Show detection confirmation dialog (allows editing before searching)
     setPendingDetection({
       data: detectionResult,
       imageUrl: undefined, // No image URL for live video
@@ -226,28 +279,25 @@ export default function Home() {
       console.error("Failed to update detected item:", error);
     }
     
-    // Build the detection message content
-    const detectionContent = `I identified this as a **${confirmedData.brand ? confirmedData.brand + " " : ""}${confirmedData.object}${confirmedData.model ? ` (${confirmedData.model})` : ""}**.\n\n**Condition:** ${confirmedData.condition}\n\n${confirmedData.issues.length > 0 ? "**Issues:**\n" + confirmedData.issues.map(i => `• ${i}`).join("\n") : ""}`;
-    
-    // Add the detection message to chat
-    const detectionMessage: ChatMessage = {
-      id: `ai-${Date.now()}`,
-      role: "assistant",
-      content: detectionContent,
-      responseType: "detection",
-      data: confirmedData,
-      imageUrl: pendingDetection.imageUrl,
-    };
-    setMessages((prev) => [...prev, detectionMessage]);
-    
-    // Save the detection message to database (especially important for live video where it's not auto-saved)
-    try {
-      await saveMessage(pendingDetection.sessionId, "assistant", detectionContent, {
-        response_type: "detection",
-        data: confirmedData
+    // If user edited the data, update the last AI message
+    const dataChanged = JSON.stringify(confirmedData) !== JSON.stringify(pendingDetection.data);
+    if (dataChanged) {
+      // Build the updated detection message content
+      const detectionContent = `I identified this as a **${confirmedData.brand ? confirmedData.brand + " " : ""}${confirmedData.object}${confirmedData.model ? ` (${confirmedData.model})` : ""}**.\n\n**Condition:** ${confirmedData.condition}\n\n${confirmedData.issues.length > 0 ? "**Issues:**\n" + confirmedData.issues.map(i => `• ${i}`).join("\n") : ""}`;
+      
+      // Update the last AI message in state
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastAiIndex = updated.findLastIndex(m => m.role === "assistant" && m.responseType === "detection");
+        if (lastAiIndex !== -1) {
+          updated[lastAiIndex] = {
+            ...updated[lastAiIndex],
+            content: detectionContent,
+            data: confirmedData,
+          };
+        }
+        return updated;
       });
-    } catch (error) {
-      console.error("Failed to save detection message:", error);
     }
     
     // Clear pending detection

@@ -20,11 +20,11 @@ class OllamaService:
         # Lock to prevent concurrent inference (DROP policy for live video)
         self._is_processing = False
         
-        # Options for LIVE video ONLY (faster, restricted for real-time)
+        # Options for LIVE video ONLY (balanced for speed + accuracy)
         self._live_inference_options = {
-            "num_ctx": 2048,      # Smaller context for speed
-            "num_predict": 800,   # More tokens to ensure JSON output after thinking
-            "temperature": 0.2,   # Lower for consistent JSON
+            "num_ctx": 4096,      # Larger context for better analysis
+            "num_predict": 2000,  # Much more tokens to ensure output after thinking
+            "temperature": 0.3,   # Slightly higher for better reasoning
             "top_p": 0.9,
             "num_gpu": 99,
         }
@@ -88,10 +88,10 @@ class OllamaService:
             return output.getvalue()
     
     async def process_image_fast(self, image_bytes: bytes) -> bytes:
-        """Fast image processing for live video - smaller size (448px)"""
+        """Fast image processing for live video - larger size (672px) for better accuracy"""
         try:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._resize_image_sync, image_bytes, 448)
+            return await loop.run_in_executor(None, self._resize_image_sync, image_bytes, 672)
         except Exception as e:
             print(f"Fast image processing error: {e}")
             return image_bytes
@@ -120,7 +120,7 @@ class OllamaService:
             return {"valid": False, "error": str(e)}
     
     async def detect_object_live(self, image_bytes: bytes) -> dict:
-        """Fast detection for live video - strict JSON output"""
+        """Fast detection for live video - simple direct prompt"""
         # DROP policy: skip if already processing
         if self._is_processing:
             return {"skipped": True, "reason": "busy"}
@@ -129,13 +129,9 @@ class OllamaService:
         try:
             optimized_image = await self.process_image_fast(image_bytes)
             
-            prompt = """Analyze this image. Output ONLY valid JSON, nothing else:
-{"object":"item name","brand":"brand or empty","condition":"broken|damaged|worn|good","issues":["issue1"],"confidence":0.8}
-
-Rules:
-- condition: broken=parts detached, damaged=cracked/bent, worn=scratches, good=fine
-- confidence: 0.0-1.0 how sure you are
-- issues: list visible problems, empty [] if none
+            # Very direct prompt
+            prompt = """What item is this and what's broken? Reply with JSON only:
+{"object":"item name","brand":"","model":"","condition":"broken or good","issues":["what is broken"],"description":"brief description"}
 
 /no_think"""
             
@@ -161,8 +157,9 @@ Rules:
             image_b64 = base64.b64encode(optimized_image).decode('utf-8')
             print(f"🖼️ Live image prepared: {len(image_b64)} chars")
             
-            prompt = """Analyze this image. Output ONLY valid JSON:
-{"object":"item name","brand":"brand or empty","condition":"broken|damaged|worn|good","issues":["issue1"],"confidence":0.8}
+            # Very direct prompt - no explanation needed, just JSON
+            prompt = """What item is this and what's broken? Reply with JSON only:
+{"object":"item name","brand":"","model":"","condition":"broken or good","issues":["what is broken"],"description":"brief description"}
 
 /no_think"""
             
@@ -171,7 +168,7 @@ Rules:
                 "prompt": prompt,
                 "images": [image_b64],
                 "stream": True,
-                "options": self._live_inference_options  # Use live options for speed
+                "options": self._live_inference_options
             }
             
             print(f"🔧 Live options: {self._live_inference_options}")
@@ -359,8 +356,23 @@ OUTPUT JSON ONLY:
             print(f"Live generate error: {e}")
             return '{"error": "' + str(e) + '"}'
     
-    async def chat_response(self, user_message: str, context: dict = None) -> str:
-        """Generate a conversational response based on context"""
+    async def chat_response(
+        self, 
+        user_message: str, 
+        context: dict = None,
+        recent_messages: list = None,
+        conversation_context: dict = None
+    ) -> str:
+        """
+        Generate a conversational response with memory.
+        
+        Args:
+            user_message: Current user message
+            context: Detected item info (brand, model, issues)
+            recent_messages: Last N messages (sliding window) - list of {role, content}
+            conversation_context: Key facts/decisions from conversation
+        """
+        # Build context string from detected item
         context_str = ""
         if context:
             item_name = context.get('object', 'Unknown item')
@@ -374,10 +386,34 @@ Item: {item_name}
 Brand: {brand if brand else 'Unknown'}
 Condition: {condition}
 Issues Found: {', '.join(issues) if issues else 'None specified'}
-==================
 """
         
-        prompt = f"""{context_str}
+        # Add conversation context (key facts - very token efficient)
+        if conversation_context:
+            facts = conversation_context.get('key_facts', [])
+            decisions = conversation_context.get('decisions_made', [])
+            if facts or decisions:
+                context_str += "\n=== CONVERSATION CONTEXT ===\n"
+                if facts:
+                    context_str += f"Key Facts: {'; '.join(facts[-5:])}\n"
+                if decisions:
+                    context_str += f"Decisions: {'; '.join(decisions[-3:])}\n"
+        
+        # Add recent conversation history (sliding window - last 4 exchanges max)
+        history_str = ""
+        if recent_messages and len(recent_messages) > 0:
+            # Take last 4 exchanges (8 messages) max to keep tokens low
+            recent = recent_messages[-8:]
+            if recent:
+                history_str = "\n=== RECENT CONVERSATION ===\n"
+                for msg in recent:
+                    role = "User" if msg['role'] == 'user' else "Assistant"
+                    # Truncate long messages to save tokens
+                    content = msg['content'][:200] + "..." if len(msg['content']) > 200 else msg['content']
+                    history_str += f"{role}: {content}\n"
+                history_str += "==================\n"
+        
+        prompt = f"""{context_str}{history_str}
 User Question: {user_message}
 
 You are a knowledgeable repair advisor. Answer the user's question directly and helpfully.
@@ -390,6 +426,7 @@ GUIDELINES:
 5. Be concise but informative (under 150 words).
 6. Be encouraging about repair when practical - this is a Right to Repair assistant!
 7. If unsure, say so honestly and suggest what info would help.
+8. Remember the conversation context - don't repeat information already discussed.
 
 Respond naturally and helpfully:
 

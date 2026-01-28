@@ -178,6 +178,10 @@ async def send_message(
         # Get existing detected item for context
         detected_item = await db_service.get_detected_item(session_id)
         
+        # Get conversation history (sliding window + key facts)
+        recent_messages = await db_service.get_recent_messages(session_id, limit=6)
+        conversation_context = await db_service.get_conversation_context(session_id)
+        
         # Determine what to do based on input
         response_type = "text"
         response_data = None
@@ -269,9 +273,25 @@ async def send_message(
             
             # If it's a question/advice request, use conversational AI
             if is_question and not wants_resources:
-                # User asking for advice - use AI to answer
-                ai_message = await ollama_service.chat_response(message, detected_item)
+                # User asking for advice - use AI to answer with conversation memory
+                ai_message = await ollama_service.chat_response(
+                    message, 
+                    detected_item,
+                    recent_messages=recent_messages,
+                    conversation_context=conversation_context
+                )
                 response_type = "text"
+                
+                # Track topic discussed (lightweight, no LLM call)
+                topic = None
+                if 'cost' in message_lower or 'price' in message_lower:
+                    topic = "repair costs"
+                elif 'worth' in message_lower or 'buy new' in message_lower:
+                    topic = "repair vs replace decision"
+                elif 'how' in message_lower and 'fix' in message_lower:
+                    topic = "repair steps"
+                if topic:
+                    await db_service.update_conversation_context(session_id, topic=topic)
             
             elif wants_resources or is_simple_yes:
                 # Search for repairs using deep search
@@ -351,14 +371,26 @@ async def send_message(
                     })
                 
                 ai_message += "\nClick on any card to learn more. Need help with something specific?"
+                
+                # Track that we searched for repairs (key fact for context)
+                await db_service.update_conversation_context(
+                    session_id, 
+                    key_fact=f"Searched repairs for: {search_query}",
+                    topic="repair resources"
+                )
             
             elif any(word in message_lower for word in ['serial', 'model', 'number', 'label']):
                 ai_message = "To find the serial number, look for a sticker on the back or bottom of your device. It usually starts with 'S/N' or 'Serial'. Upload a photo of it and I'll extract the details!"
                 response_type = "clarification"
             
             else:
-                # General conversation - use AI
-                ai_message = await ollama_service.chat_response(message, detected_item)
+                # General conversation - use AI with memory
+                ai_message = await ollama_service.chat_response(
+                    message, 
+                    detected_item,
+                    recent_messages=recent_messages,
+                    conversation_context=conversation_context
+                )
                 response_type = "text"
         
         elif message:

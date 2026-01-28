@@ -28,10 +28,17 @@ export default function LiveVideoAnalysis({
     {
       sessionId,
       onResult: (result) => {
+        console.log('🎯 onResult callback received:', result.type, result);
         if (result.type === 'complete') {
+          console.log('✅ Detection complete! Setting result and mode...');
+          console.log('📦 Result data:', result.result);
           setDetectionResult(result.result);
           setMode('result');
           // Camera will be stopped in the effect below when mode changes to 'result'
+        } else if (result.type === 'low_confidence') {
+          console.log('⚠️ Low confidence detection:', result.confidence);
+        } else if (result.type === 'error') {
+          console.log('❌ Detection error:', result.message);
         }
       }
     }
@@ -118,7 +125,9 @@ export default function LiveVideoAnalysis({
 
   // Call onDetectionComplete when result is ready (after camera stopped)
   useEffect(() => {
+    console.log('📍 Detection effect check - mode:', mode, 'hasResult:', !!detectionResult);
     if (mode === 'result' && detectionResult) {
+      console.log('🚀 Calling onDetectionComplete with:', detectionResult);
       onDetectionComplete?.(detectionResult);
     }
   }, [mode, detectionResult, onDetectionComplete]);
