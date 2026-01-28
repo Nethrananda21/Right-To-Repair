@@ -100,17 +100,13 @@ export default function Sidebar({
             Workbench
           </h2>
           <nav className="flex flex-col gap-2">
-            {/* Project History Button */}
-            <button
-              onClick={() => {
-                onNewSession();
-                onCloseMobile();
-              }}
-              className="flex items-center gap-3 px-4 py-3 bg-[var(--terracotta)] text-white rounded-xl shadow-md transition-all hover:brightness-110 active:scale-95 font-semibold group relative overflow-hidden"
+            {/* Project History Header */}
+            <div
+              className="flex items-center gap-3 px-4 py-3 bg-[var(--terracotta)] text-white rounded-xl shadow-md font-semibold group relative overflow-hidden"
             >
               <span className="material-symbols-outlined">history</span>
               <span className="relative z-10">Project History</span>
-            </button>
+            </div>
 
             {/* Session List */}
             <div className="flex flex-col gap-1 max-h-48 overflow-y-auto mt-2">

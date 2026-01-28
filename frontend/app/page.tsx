@@ -158,20 +158,25 @@ export default function Home() {
   // Delete session
   const handleDeleteSession = async (sessionId: string) => {
     try {
-      await deleteSession(sessionId);
-      
-      // Remove from local state
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-      
-      // If deleted current session, clear the view
-      if (currentSessionId === sessionId) {
+      // If deleting current session, clear view FIRST (before API call)
+      const isDeletingCurrent = currentSessionId === sessionId;
+      if (isDeletingCurrent) {
         setCurrentSessionId(null);
         setMessages([]);
         setDetectedItem(null);
         setLastImageUrl(null);
+        localStorage.removeItem("lastSessionId");
       }
+      
+      // Remove from local state immediately
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      
+      // Then delete from backend
+      await deleteSession(sessionId);
     } catch (error) {
       console.error("Failed to delete session:", error);
+      // Reload sessions to restore correct state if delete failed
+      loadSessions();
     }
   };
 
@@ -186,15 +191,8 @@ export default function Home() {
     // Exit live mode first
     setIsLiveMode(false);
     
-    // Create a new session if needed
-    let sessionId = currentSessionId;
-    if (!sessionId) {
-      const session = await createSession();
-      setSessions((prev) => [session, ...prev]);
-      setCurrentSessionId(session.id);
-      localStorage.setItem("lastSessionId", session.id);
-      sessionId = session.id;
-    }
+    // Session is guaranteed to exist (LiveVideoAnalysis only renders when currentSessionId exists)
+    const sessionId = currentSessionId!;
     
     // Add user message for live analysis
     const userMessage: ChatMessage = {
@@ -250,11 +248,44 @@ export default function Home() {
     });
   };
 
+  // Track if we're creating a live session (use ref to avoid re-triggering effect)
+  const creatingLiveSessionRef = useRef(false);
+  
+  useEffect(() => {
+    if (isLiveMode && !currentSessionId && !creatingLiveSessionRef.current) {
+      creatingLiveSessionRef.current = true;
+      createSession().then((session) => {
+        setSessions((prev) => [session, ...prev]);
+        setCurrentSessionId(session.id);
+        localStorage.setItem("lastSessionId", session.id);
+        setMessages([]);
+        setDetectedItem(null);
+        setLastImageUrl(null);
+        creatingLiveSessionRef.current = false;
+      }).catch((error) => {
+        console.error("Failed to create live session:", error);
+        creatingLiveSessionRef.current = false;
+        setIsLiveMode(false); // Exit live mode on error
+      });
+    }
+  }, [isLiveMode, currentSessionId]);
+  
+  // Reset ref when exiting live mode
+  useEffect(() => {
+    if (!isLiveMode) {
+      creatingLiveSessionRef.current = false;
+    }
+  }, [isLiveMode]);
+
   // Show live video component if in live mode
   if (isLiveMode) {
     if (!currentSessionId) {
-      handleNewSession();
-      return null;
+      // Wait for session creation
+      return (
+        <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-[var(--warm-beige)] to-[var(--soft-sage)]">
+          <div className="text-[var(--earth-muted)]">Starting live session...</div>
+        </div>
+      );
     }
     return (
       <LiveVideoAnalysis

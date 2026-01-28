@@ -198,27 +198,55 @@ class DatabaseService:
         session_id: str,
         detection_result: dict
     ) -> str:
-        """Save a detected item"""
+        """Save or update a detected item (upsert)"""
         await self.initialize()
-        item_id = str(uuid.uuid4())
         
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """INSERT INTO detected_items 
-                   (id, session_id, object, brand, model, serial_number, condition, issues, description)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    item_id,
-                    session_id,
-                    detection_result.get('object', ''),
-                    detection_result.get('brand', ''),
-                    detection_result.get('model', ''),
-                    detection_result.get('serial_number', ''),
-                    detection_result.get('condition', ''),
-                    json.dumps(detection_result.get('issues', [])),
-                    detection_result.get('description', '')
-                )
+            # Check if item exists for this session
+            cursor = await db.execute(
+                "SELECT id FROM detected_items WHERE session_id = ?",
+                (session_id,)
             )
+            existing = await cursor.fetchone()
+            
+            if existing:
+                # Update existing item
+                item_id = existing[0]
+                await db.execute(
+                    """UPDATE detected_items 
+                       SET object = ?, brand = ?, model = ?, serial_number = ?, 
+                           condition = ?, issues = ?, description = ?
+                       WHERE session_id = ?""",
+                    (
+                        detection_result.get('object', ''),
+                        detection_result.get('brand', ''),
+                        detection_result.get('model', ''),
+                        detection_result.get('serial_number', ''),
+                        detection_result.get('condition', ''),
+                        json.dumps(detection_result.get('issues', [])),
+                        detection_result.get('description', ''),
+                        session_id
+                    )
+                )
+            else:
+                # Insert new item
+                item_id = str(uuid.uuid4())
+                await db.execute(
+                    """INSERT INTO detected_items 
+                       (id, session_id, object, brand, model, serial_number, condition, issues, description)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        item_id,
+                        session_id,
+                        detection_result.get('object', ''),
+                        detection_result.get('brand', ''),
+                        detection_result.get('model', ''),
+                        detection_result.get('serial_number', ''),
+                        detection_result.get('condition', ''),
+                        json.dumps(detection_result.get('issues', [])),
+                        detection_result.get('description', '')
+                    )
+                )
             await db.commit()
         
         return item_id
