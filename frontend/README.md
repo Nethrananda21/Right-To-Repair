@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Right to Repair - Frontend
+
+AI-powered repair assistant with live video analysis and intelligent repair resource discovery.
+
+## Features
+
+- **Image Upload Analysis**: Upload photos of damaged items for AI detection
+- **Live Video Detection**: Real-time camera-based damage assessment
+- **Smart Chat Interface**: Conversational AI with repair context memory
+- **Repair Resource Search**: Deep search across Reddit, Forums, and YouTube
+- **Detection Confirmation**: Edit/correct AI detections before searching
+- **Session History**: Persistent chat history across page reloads
+- **Dark Mode Support**: System-aware theme switching
+
+## Tech Stack
+
+- **Next.js 14** - React framework with App Router
+- **TypeScript** - Type-safe development
+- **Tailwind CSS** - Utility-first styling
+- **WebSocket** - Real-time video streaming
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- Backend server running at `http://localhost:8000`
+
+### Installation
 
 ```bash
+cd frontend
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project Structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+frontend/
+├── app/
+│   ├── page.tsx           # Main chat interface
+│   ├── layout.tsx         # Root layout
+│   └── globals.css        # Global styles & CSS variables
+├── components/
+│   ├── Sidebar.tsx        # Session list & navigation
+│   ├── Header.tsx         # App header
+│   ├── ChatInput.tsx      # Message input with image upload
+│   ├── UserMessage.tsx    # User message display
+│   ├── AIMessage.tsx      # AI response with repair results
+│   ├── LiveVideoAnalysis.tsx  # Live camera detection
+│   ├── DetectionConfirm.tsx   # Edit detection dialog
+│   ├── DetectionResults.tsx   # Detection display card
+│   └── RepairResults.tsx      # Search results display
+├── lib/
+│   ├── chatApi.ts         # Backend API client
+│   ├── useVideoHooks.ts   # Camera & WebSocket hooks
+│   └── frameQuality.ts    # Video frame quality assessment
+└── public/
+    └── ...                # Static assets
+```
 
-## Learn More
+## Key Components
 
-To learn more about Next.js, take a look at the following resources:
+### Live Video Analysis
+- WebSocket connection to `/ws/vision`
+- Automatic frame quality filtering
+- Real-time processing indicators
+- Auto-stops camera on detection
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Chat Interface
+- Markdown rendering for AI responses
+- Image preview in messages
+- Repair results with source links
+- Conversation memory context
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Detection Confirmation
+- Edit brand, model, serial number
+- Modify detected issues
+- Triggers optimized search after confirmation
 
-## Deploy on Vercel
+## Configuration
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+API endpoint configured in `lib/chatApi.ts`:
+```typescript
+const API_BASE = 'http://localhost:8000/api';
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Scripts
+
+```bash
+npm run dev      # Development server
+npm run build    # Production build
+npm run start    # Start production server
+npm run lint     # Run ESLint
+```
+

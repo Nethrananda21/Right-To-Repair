@@ -552,9 +552,7 @@ export default function Home() {
           {/* Live Video Toggle Button */}
           <button
             onClick={() => {
-              if (!currentSessionId) {
-                handleNewSession();
-              }
+              // Just set live mode - the useEffect will handle session creation
               setIsLiveMode(true);
             }}
             className="absolute right-4 -top-12 md:-top-14 px-4 py-2 bg-gradient-to-r from-[var(--terracotta)] to-orange-500 hover:from-[var(--terracotta)]/90 hover:to-orange-500/90 text-white text-sm font-medium rounded-full shadow-lg transition-all duration-300 flex items-center gap-2 z-50"
