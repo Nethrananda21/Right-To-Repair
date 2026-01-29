@@ -1,8 +1,15 @@
 'use client';
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useVideoStream, useVisionWebSocket } from '@/lib/useVideoHooks';
 import { getQualityFeedback, FrameMetrics } from '@/lib/frameQuality';
+
+const getWebSocketUrl = () => {
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const wsProtocol = apiBase.startsWith('https') ? 'wss' : 'ws';
+  const wsHost = apiBase.replace(/^https?:\/\//, '');
+  return `${wsProtocol}://${wsHost}/ws/vision`;
+};
 
 interface LiveVideoAnalysisProps {
   sessionId?: string;
@@ -16,6 +23,8 @@ export default function LiveVideoAnalysis({
   const [mode, setMode] = useState<'setup' | 'streaming' | 'result'>('setup');
   const [detectionResult, setDetectionResult] = useState<any>(null);
 
+  const wsUrl = useMemo(() => getWebSocketUrl(), []);
+
   const {
     isConnected,
     currentResult,
@@ -24,7 +33,7 @@ export default function LiveVideoAnalysis({
     disconnect: disconnectWs,
     sendFrame
   } = useVisionWebSocket(
-    'ws://localhost:8000/ws/vision',
+    wsUrl,
     {
       sessionId,
       onResult: (result) => {
