@@ -120,7 +120,7 @@ class OllamaService:
             return {"valid": False, "error": str(e)}
     
     async def detect_object_live(self, image_bytes: bytes) -> dict:
-        """Fast detection for live video - simple direct prompt"""
+        """Fast detection for live video - structured reasoning prompt"""
         # DROP policy: skip if already processing
         if self._is_processing:
             return {"skipped": True, "reason": "busy"}
@@ -129,9 +129,28 @@ class OllamaService:
         try:
             optimized_image = await self.process_image_fast(image_bytes)
             
-            # Very direct prompt
-            prompt = """What item is this and what's broken? Reply with JSON only:
-{"object":"item name","brand":"","model":"","condition":"broken or good","issues":["what is broken"],"description":"brief description"}
+            # Structured Chain-of-Thought prompt - neutral, evidence-based
+            prompt = """Analyze this image step by step:
+
+1. IDENTIFY: What object is this? (be specific - e.g., "laptop", "smartphone", "headphones")
+2. MATERIAL: What is it made of? (plastic, metal, glass, fabric, etc.)
+3. OBSERVE: Describe what you actually see - colors, shapes, positions.
+4. EVIDENCE CHECK: Look for SPECIFIC signs of damage:
+   - Cracks, fractures, breaks?
+   - Bent, warped, or misaligned parts?
+   - Missing components?
+   - Burns, corrosion, swelling?
+   - Deep scratches or dents?
+5. VERDICT: Based ONLY on evidence found, is this item damaged or in good condition?
+
+IMPORTANT: 
+- If no clear damage evidence exists, condition is "good" with empty issues array.
+- Only report issues you can visually confirm with specific evidence.
+- Do NOT assume damage - prove it.
+- For brand/model: Use "" (empty string) if not visible. Never write "not visible", "unknown", or "N/A".
+
+Respond with JSON only:
+{"object":"specific item name","brand":"","model":"","condition":"good","issues":[],"description":"what you observe"}
 
 /no_think"""
             
@@ -157,9 +176,28 @@ class OllamaService:
             image_b64 = base64.b64encode(optimized_image).decode('utf-8')
             print(f"🖼️ Live image prepared: {len(image_b64)} chars")
             
-            # Very direct prompt - no explanation needed, just JSON
-            prompt = """What item is this and what's broken? Reply with JSON only:
-{"object":"item name","brand":"","model":"","condition":"broken or good","issues":["what is broken"],"description":"brief description"}
+            # Structured Chain-of-Thought prompt - neutral, evidence-based
+            prompt = """Analyze this image step by step:
+
+1. IDENTIFY: What object is this? (be specific - e.g., "laptop", "smartphone", "headphones")
+2. MATERIAL: What is it made of? (plastic, metal, glass, fabric, etc.)
+3. OBSERVE: Describe what you actually see - colors, shapes, positions.
+4. EVIDENCE CHECK: Look for SPECIFIC signs of damage:
+   - Cracks, fractures, breaks?
+   - Bent, warped, or misaligned parts?
+   - Missing components?
+   - Burns, corrosion, swelling?
+   - Deep scratches or dents?
+5. VERDICT: Based ONLY on evidence found, is this item damaged or in good condition?
+
+IMPORTANT: 
+- If no clear damage evidence exists, condition is "good" with empty issues array.
+- Only report issues you can visually confirm with specific evidence.
+- Do NOT assume damage - prove it.
+- For brand/model: Use "" (empty string) if not visible. Never write "not visible", "unknown", or "N/A".
+
+Respond with JSON only:
+{"object":"specific item name","brand":"","model":"","condition":"good","issues":[],"description":"what you observe"}
 
 /no_think"""
             
@@ -212,34 +250,57 @@ class OllamaService:
         """Detect object, brand, model, and condition from image"""
         optimized_image = await self.process_image(image_bytes)
         
-        prompt = """Analyze this image of an item that may need repair.
+        prompt = """Analyze this image using structured reasoning:
 
-First, describe what you see in detail:
-- What type of object is this?
-- Describe the physical state of each visible part
-- Note any irregularities, asymmetry, or unusual positioning
+## STEP 1: IDENTIFICATION
+What specific object is this? (e.g., "wireless headphones", "laptop", "smartphone", "tablet", "PCB board")
+What brand/model if visible?
 
-Then answer these YES/NO questions:
-1. Are all parts properly connected and attached?
-2. Is there any visible crack, break, or fracture?
-3. Are there any bent, warped, or misaligned parts?
-4. Is anything missing or detached?
-5. Are there signs of wear like scratches, dents, or discoloration?
+## STEP 2: MATERIAL ANALYSIS  
+What materials make up this object? (metal, plastic, glass, rubber, fabric, electronic components, etc.)
+This helps identify what type of damage to look for.
 
-Based on your analysis, provide this JSON:
+## STEP 3: VISUAL OBSERVATION
+Describe exactly what you see without interpretation:
+- Colors, textures, shapes
+- Position and orientation of parts
+- Surface characteristics
+
+## STEP 4: DAMAGE EVIDENCE CHECK
+For each potential issue, you MUST cite specific visual evidence:
+
+| Damage Type | What to look for | Do you see it? (cite evidence) |
+|-------------|------------------|--------------------------------|
+| Cracks/Breaks | Visible fracture lines, separated pieces | |
+| Bending/Warping | Unnatural curves, misalignment | |
+| Missing Parts | Gaps, empty slots, exposed internals | |
+| Burns/Corrosion | Discoloration, char marks, oxidation | |
+| Swelling | Bulging, deformation from inside | |
+| Deep Scratches | Gouges that affect structure | |
+
+## STEP 5: FINAL VERDICT
+Based ONLY on confirmed evidence from Step 4:
+- "good" = No damage evidence found (item appears functional)
+- "worn" = Minor cosmetic wear only (light scratches, scuffs)
+- "damaged" = Structural issues but parts attached (cracks, bends, corrosion)
+- "broken" = Parts separated, detached, or non-functional
+
+CRITICAL RULES:
+- If you cannot point to specific visual evidence, the item is "good"
+- Do NOT assume damage exists - you must PROVE it
+- Normal wear patterns are not damage
+- Surface reflections/lighting are not cracks
+- For brand/model: Use "" (empty string) if not visible. Never write "not visible", "unknown", or "N/A".
+
+Provide your final answer as JSON only:
 {
-    "object": "What this item is (e.g., wireless headphones, laptop, phone)",
-    "brand": "Brand name if visible, otherwise empty string",
-    "model": "Model number if visible, otherwise empty string",
-    "condition": "broken OR damaged OR worn OR good",
-    "issues": ["List each problem you found with its location"],
-    "description": "Summary of item and main issue"
+    "object": "specific item name",
+    "brand": "",
+    "model": "",
+    "condition": "good",
+    "issues": [],
+    "description": "objective description of what you observe"
 }
-
-Use "broken" if parts are detached/snapped. Use "damaged" if cracked/bent but attached.
-Use "worn" for cosmetic wear. Use "good" ONLY if nothing wrong.
-
-Output valid JSON only.
 
 /no_think"""
 
