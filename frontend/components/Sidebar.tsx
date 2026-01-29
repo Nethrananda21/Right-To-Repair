@@ -100,6 +100,18 @@ export default function Sidebar({
             Workbench
           </h2>
           <nav className="flex flex-col gap-2">
+            {/* New Chat Button */}
+            <button
+              onClick={() => {
+                onNewSession();
+                onCloseMobile();
+              }}
+              className="flex items-center gap-3 px-4 py-3 border-2 border-dashed border-[var(--terracotta)]/40 hover:border-[var(--terracotta)] hover:bg-[var(--terracotta)]/5 text-[var(--terracotta)] rounded-xl font-semibold group relative overflow-hidden transition-all"
+            >
+              <span className="material-symbols-outlined group-hover:rotate-90 transition-transform duration-300">add</span>
+              <span className="relative z-10">New Chat</span>
+            </button>
+
             {/* Project History Header */}
             <div
               className="flex items-center gap-3 px-4 py-3 bg-[var(--terracotta)] text-white rounded-xl shadow-md font-semibold group relative overflow-hidden"

@@ -298,29 +298,68 @@ async def send_message(
                 response_type = "repair_results"
                 
                 # Build optimized search query from detected item
-                brand = detected_item.get('brand', '')
-                model = detected_item.get('model', '')
-                obj = detected_item.get('object', '')
+                brand = detected_item.get('brand', '').strip()
+                model = detected_item.get('model', '').strip()
+                obj = detected_item.get('object', '').strip()
                 issues = detected_item.get('issues', [])
+                condition = detected_item.get('condition', '').strip()
+                description = detected_item.get('description', '').strip()
                 
-                # Create search query
+                # Create focused, summarized search query
+                # Priority: specific problem > object > brand/model
                 query_parts = []
-                if brand:
+                
+                # Add brand/model only if they provide value (not generic)
+                if brand and brand.lower() not in ['unknown', 'generic', 'n/a', '']:
                     query_parts.append(brand)
-                if model:
+                if model and model.lower() not in ['unknown', 'n/a', '']:
                     query_parts.append(model)
+                
+                # Always include object type
                 if obj:
                     query_parts.append(obj)
-                if issues:
-                    # Add first issue for specificity
-                    first_issue = issues[0]
-                    if ":" in first_issue:
-                        first_issue = first_issue.split(":")[-1].strip()
-                    query_parts.append(first_issue)
-                query_parts.append("repair")
                 
+                # Extract the core problem from issues (most important for search)
+                problem_keywords = []
+                if issues:
+                    for issue in issues[:2]:  # Max 2 issues for focused query
+                        # Clean up the issue text - extract key problem words
+                        issue_clean = issue.lower()
+                        # Remove common filler words
+                        for filler in ['the', 'is', 'are', 'has', 'have', 'appears', 'seems', 'visible', 'showing', 'signs of']:
+                            issue_clean = issue_clean.replace(filler, '')
+                        # Get core problem words
+                        issue_words = [w.strip() for w in issue_clean.split() if len(w.strip()) > 2]
+                        if issue_words:
+                            problem_keywords.extend(issue_words[:3])  # Max 3 words per issue
+                
+                # Add unique problem keywords
+                seen = set()
+                for kw in problem_keywords:
+                    if kw not in seen and kw not in [p.lower() for p in query_parts]:
+                        query_parts.append(kw)
+                        seen.add(kw)
+                        if len(seen) >= 3:  # Max 3 problem keywords
+                            break
+                
+                # Add "repair" or "fix" based on condition
+                if condition in ['broken', 'damaged']:
+                    query_parts.append('repair fix')
+                else:
+                    query_parts.append('repair')
+                
+                # Create final search query - concise and focused
                 search_query = " ".join(query_parts)
-                context = f"Issues: {', '.join(issues)}" if issues else None
+                
+                # Create context summary for better relevance scoring
+                context_parts = []
+                if condition and condition != 'good':
+                    context_parts.append(f"Condition: {condition}")
+                if issues:
+                    context_parts.append(f"Problems: {'; '.join(issues[:3])}")
+                if description and len(description) < 200:
+                    context_parts.append(f"Details: {description}")
+                context = " | ".join(context_parts) if context_parts else None
                 
                 print(f"Deep search query: {search_query}")
                 print(f"Context: {context}")

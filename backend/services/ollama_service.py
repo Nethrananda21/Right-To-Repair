@@ -129,29 +129,10 @@ class OllamaService:
         try:
             optimized_image = await self.process_image_fast(image_bytes)
             
-            # Structured Chain-of-Thought prompt - neutral, evidence-based
-            prompt = """Analyze this image step by step:
+            # Universal natural prompt - let the model judge
+            prompt = """What is this object and what condition is it in?
 
-1. IDENTIFY: What object is this? (be specific - e.g., "laptop", "smartphone", "headphones")
-2. MATERIAL: What is it made of? (plastic, metal, glass, fabric, etc.)
-3. OBSERVE: Describe what you actually see - colors, shapes, positions.
-4. EVIDENCE CHECK: Look for SPECIFIC signs of damage:
-   - Cracks, fractures, breaks?
-   - Bent, warped, or misaligned parts?
-   - Missing components?
-   - Burns, corrosion, swelling?
-   - Deep scratches or dents?
-5. VERDICT: Based ONLY on evidence found, is this item damaged or in good condition?
-
-IMPORTANT: 
-- If no clear damage evidence exists, condition is "good" with empty issues array.
-- Only report issues you can visually confirm with specific evidence.
-- Do NOT assume damage - prove it.
-- For brand/model: Use "" (empty string) if not visible. Never write "not visible", "unknown", or "N/A".
-
-Respond with JSON only:
-{"object":"specific item name","brand":"","model":"","condition":"good","issues":[],"description":"what you observe"}
-
+JSON: {"object":"name","brand":"","model":"","condition":"broken|damaged|worn|good","issues":[],"description":""}
 /no_think"""
             
             response = await self._generate_live(prompt, [optimized_image])
@@ -176,29 +157,10 @@ Respond with JSON only:
             image_b64 = base64.b64encode(optimized_image).decode('utf-8')
             print(f"🖼️ Live image prepared: {len(image_b64)} chars")
             
-            # Structured Chain-of-Thought prompt - neutral, evidence-based
-            prompt = """Analyze this image step by step:
+            # Universal natural prompt - let the model judge
+            prompt = """What is this object and what condition is it in?
 
-1. IDENTIFY: What object is this? (be specific - e.g., "laptop", "smartphone", "headphones")
-2. MATERIAL: What is it made of? (plastic, metal, glass, fabric, etc.)
-3. OBSERVE: Describe what you actually see - colors, shapes, positions.
-4. EVIDENCE CHECK: Look for SPECIFIC signs of damage:
-   - Cracks, fractures, breaks?
-   - Bent, warped, or misaligned parts?
-   - Missing components?
-   - Burns, corrosion, swelling?
-   - Deep scratches or dents?
-5. VERDICT: Based ONLY on evidence found, is this item damaged or in good condition?
-
-IMPORTANT: 
-- If no clear damage evidence exists, condition is "good" with empty issues array.
-- Only report issues you can visually confirm with specific evidence.
-- Do NOT assume damage - prove it.
-- For brand/model: Use "" (empty string) if not visible. Never write "not visible", "unknown", or "N/A".
-
-Respond with JSON only:
-{"object":"specific item name","brand":"","model":"","condition":"good","issues":[],"description":"what you observe"}
-
+JSON: {"object":"name","brand":"","model":"","condition":"broken|damaged|worn|good","issues":[],"description":""}
 /no_think"""
             
             payload = {
@@ -250,56 +212,105 @@ Respond with JSON only:
         """Detect object, brand, model, and condition from image"""
         optimized_image = await self.process_image(image_bytes)
         
-        prompt = """Analyze this image using structured reasoning:
+        prompt = """Analyze the PRIMARY OBJECT in this image. IGNORE the background surface (table, floor, fabric).
 
-## STEP 1: IDENTIFICATION
-What specific object is this? (e.g., "wireless headphones", "laptop", "smartphone", "tablet", "PCB board")
-What brand/model if visible?
+## STEP 1: OBJECT ISOLATION
+- What is the MAIN OBJECT in focus? (not the surface it sits on)
+- What is the background surface? (wood table, fabric, tile floor - EXCLUDE from damage analysis)
+- Primary material of OBJECT: metal, plastic, glass, rubber, fabric, PCB, leather?
 
-## STEP 2: MATERIAL ANALYSIS  
-What materials make up this object? (metal, plastic, glass, rubber, fabric, electronic components, etc.)
-This helps identify what type of damage to look for.
+**Material Verification (to avoid confusion):**
+- Metal: Shows REFLECTIONS, uniform shine, cold appearance
+- Wood: Natural GRAIN LINES, warm tone, organic texture variation
+- If scratched surface shows metal grain → it's METAL (not wood floor)
 
-## STEP 3: VISUAL OBSERVATION
-Describe exactly what you see without interpretation:
-- Colors, textures, shapes
-- Position and orientation of parts
-- Surface characteristics
+## STEP 2: SHAPE & STRUCTURE (3D geometry)
+Examine the PHYSICAL FORM of the object:
 
-## STEP 4: DAMAGE EVIDENCE CHECK
-For each potential issue, you MUST cite specific visual evidence:
+**A) Overall Shape Integrity:**
+- Is the silhouette/outline intact and symmetrical?
+- Any parts PHYSICALLY SEPARATED or detached from main body?
 
-| Damage Type | What to look for | Do you see it? (cite evidence) |
-|-------------|------------------|--------------------------------|
-| Cracks/Breaks | Visible fracture lines, separated pieces | |
-| Bending/Warping | Unnatural curves, misalignment | |
-| Missing Parts | Gaps, empty slots, exposed internals | |
-| Burns/Corrosion | Discoloration, char marks, oxidation | |
-| Swelling | Bulging, deformation from inside | |
-| Deep Scratches | Gouges that affect structure | |
+**B) 3D Deformation Test (CRITICAL for bent vs cracked):**
+- Does the device sit FLAT on a surface, or does it rock/have gaps?
+- Are there CURVES in edges that should be straight? (view from side/profile)
+- Is there SEPARATION between screen and frame/bezel? (visible gaps)
+- Is the back panel or case BULGING outward? (swollen battery indicator)
 
-## STEP 5: FINAL VERDICT
-Based ONLY on confirmed evidence from Step 4:
-- "good" = No damage evidence found (item appears functional)
-- "worn" = Minor cosmetic wear only (light scratches, scuffs)
-- "damaged" = Structural issues but parts attached (cracks, bends, corrosion)
-- "broken" = Parts separated, detached, or non-functional
+**KEY DISTINCTION:**
+- BENT/WARPED = 3D shape is wrong (doesn't sit flat, curved edges, gaps)
+- CRACKED = Surface damage but shape is still correct
 
-CRITICAL RULES:
-- If you cannot point to specific visual evidence, the item is "good"
-- Do NOT assume damage exists - you must PROVE it
-- Normal wear patterns are not damage
-- Surface reflections/lighting are not cracks
-- For brand/model: Use "" (empty string) if not visible. Never write "not visible", "unknown", or "N/A".
+## STEP 3: SURFACE ANALYSIS (2D texture)
+Look at the FACE/SURFACE of the object (not edges):
 
-Provide your final answer as JSON only:
+**Surface Damage Types:**
+- CRACKS = Dark fracture lines that break through surface material (glass, plastic)
+- SCRATCHES = Shallow marks on surface (don't penetrate material)
+- DENTS = Localized depressions/indentations in surface
+
+**Screen-Specific (to avoid confusion):**
+- Dead pixels: Tiny dots in grid pattern, screen is FLAT
+- Screen protector bubbles: RAISED circular areas, can see film EDGE around screen border
+- Screen cracks: Spiderweb pattern, glass fracture lines
+
+**Ignore:** Wood grain, fabric weave, brushed metal patterns - these are NOT damage
+
+## STEP 4: COLOR + TEXTURE DEFECT IDENTIFICATION
+Match BOTH color AND texture (color alone is insufficient):
+
+| Defect Appearance | Color | Texture | What it indicates |
+|-------------------|-------|---------|-------------------|
+| **Burns** | BLACK/dark brown | SHARP edges, localized, soot | Heat damage to component/PCB |
+| **Rust** | ORANGE/red-brown | Flaky, rough | Iron oxidation |
+| **Copper Corrosion** | GREEN/teal/blue | CRUSTY, fuzzy, crystalline | PCB/metal corrosion from moisture |
+| **Battery Leak** | WHITE powder | Crusty deposits | Battery acid corrosion |
+| **Swollen Battery** | Same color as device | BULGING, raised, gaps | Internal pressure/expansion |
+
+**CRITICAL:** Burnt vs Corroded PCB:
+- Burnt = BLACK with SHARP edges, localized burn pattern, may have melted plastic
+- Corroded = GREEN/white FUZZY deposits, crusty texture, spreads irregularly
+
+## STEP 5: SERIAL/MODEL NUMBER CHECK
+- Look for any visible labels, stickers, or engravings
+- Extract serial number (S/N, SN, Serial) if visible
+- Extract model number if visible
+- Brand name/logo if visible
+
+## STEP 6: FINAL VERDICT
+Based ONLY on confirmed observations:
+
+**Condition Definitions:**
+- "broken" = Parts DETACHED, separated, snapped off, or physically disconnected
+- "damaged" = Cracks, bends, burns, rust, corrosion, swelling present (but parts attached)
+- "worn" = Only minor cosmetic wear (light scratches, scuffs, fading)
+- "good" = No structural or functional defects found
+
+**CRITICAL CONSISTENCY RULES:**
+1. If description mentions detached/separated parts → condition MUST be "broken"
+2. If description mentions cracks/burns/corrosion/bends/swelling → condition MUST be "damaged"
+3. Issues array MUST include location and evidence for EACH defect mentioned in description
+4. If you identify bending, explain evidence (gaps, won't sit flat, curved edges)
+5. If electrical damage, specify if burnt (black/sharp) or corroded (green/fuzzy)
+6. Do NOT confuse background surface texture with object damage
+7. Brand/model/serial: Use "" if not visible
+
+**Issues format:** "[damage type] at [location] - [evidence]"
+Examples:
+- "bent chassis - device has 2mm gap when laid flat, left edge curves outward"
+- "swollen battery - back panel bulges, screen separated from bezel with visible gap"
+- "burn damage at component U3 - black charring with sharp edges"
+- "corrosion at battery terminals - green crusty deposits, fuzzy texture"
+
+Provide JSON only:
 {
     "object": "specific item name",
     "brand": "",
     "model": "",
-    "condition": "good",
-    "issues": [],
-    "description": "objective description of what you observe"
+    "serial_number": "",
+    "condition": "broken|damaged|worn|good",
+    "issues": ["damage at location - evidence"],
+    "description": "what you observe about the object"
 }
 
 /no_think"""
@@ -330,7 +341,7 @@ OUTPUT JSON ONLY:
         """Combined detection from multiple images - Concurrent processing"""
         item_task = asyncio.create_task(self.detect_object(item_image))
         
-        serial_result = {"serial_number": "Not Provided", "model_number": "Not Found", "manufacturer": "Unknown", "other_codes": []}
+        serial_result = {"serial_number": "", "model_number": "", "manufacturer": "", "other_codes": []}
         
         if serial_image:
             serial_task = asyncio.create_task(self.extract_serial(serial_image))
@@ -338,13 +349,17 @@ OUTPUT JSON ONLY:
         else:
             object_result = await item_task
         
+        # Use serial from main detection if separate serial image wasn't provided
+        detected_serial = object_result.get("serial_number", "") or serial_result.get("serial_number", "")
+        detected_model = object_result.get("model", "") or serial_result.get("model_number", "")
+        
         return {
             "object": object_result.get("object", "Unknown"),
-            "brand": object_result.get("brand", "Unknown"),
-            "model": serial_result.get("model_number", object_result.get("model", "Unknown")),
-            "serial_number": serial_result.get("serial_number", "Not Found"),
-            "manufacturer": serial_result.get("manufacturer", object_result.get("brand", "Unknown")),
-            "condition": object_result.get("condition", "Unknown"),
+            "brand": object_result.get("brand", ""),
+            "model": detected_model,
+            "serial_number": detected_serial,
+            "manufacturer": serial_result.get("manufacturer", object_result.get("brand", "")),
+            "condition": object_result.get("condition", "unknown"),
             "issues": object_result.get("issues", []),
             "description": object_result.get("description", ""),
             "other_codes": serial_result.get("other_codes", []),
@@ -409,12 +424,25 @@ OUTPUT JSON ONLY:
                 "options": self._live_inference_options  # Use live options for speed
             }
             
+            print(f"🔍 _generate_live: sending to Ollama, image size={len(images_b64[0])} chars")
+            
             client = await self.get_client()
             response = await client.post(f"{self.host}/api/generate", json=payload)
             response.raise_for_status()
-            return response.json().get('response', '')
+            
+            result = response.json()
+            raw_response = result.get('response', '')
+            done_reason = result.get('done_reason', 'unknown')
+            
+            print(f"🔍 _generate_live: got {len(raw_response)} chars, done_reason={done_reason}")
+            if not raw_response:
+                print(f"⚠️ Empty response from Ollama! Full result: {result}")
+            
+            return raw_response
         except Exception as e:
             print(f"Live generate error: {e}")
+            import traceback
+            traceback.print_exc()
             return '{"error": "' + str(e) + '"}'
     
     async def chat_response(
@@ -508,7 +536,7 @@ Respond naturally and helpfully:
             return "I'm here to help with your repair! What would you like to know?"
     
     def _parse_json_response(self, response: str, response_type: str) -> dict:
-        """Parse JSON from model response"""
+        """Parse JSON from model response with truncation recovery"""
         try:
             cleaned = response.strip()
             # Remove thinking blocks if any exist (robustness)
@@ -524,16 +552,43 @@ Respond naturally and helpfully:
                 parsed = json.loads(json_str)
                 print(f"Parsed JSON successfully: object={parsed.get('object', 'N/A')}")
                 return parsed
-            else:
-                print(f"No JSON found in response. Raw: {response[:200]}...")
+            elif start != -1:
+                # Truncated JSON - try to recover partial data
+                partial = cleaned[start:]
+                print(f"Attempting to recover truncated JSON: {partial[:100]}...")
+                
+                # Extract what we can with regex
+                obj_match = re.search(r'"object"\s*:\s*"([^"]*)"', partial)
+                brand_match = re.search(r'"brand"\s*:\s*"([^"]*)"', partial)
+                model_match = re.search(r'"model"\s*:\s*"([^"]*)"', partial)
+                serial_match = re.search(r'"serial_number"\s*:\s*"([^"]*)"', partial)
+                condition_match = re.search(r'"condition"\s*:\s*"([^"]*)"', partial)
+                
+                if obj_match:
+                    # Build recovered result
+                    recovered = {
+                        "object": obj_match.group(1) if obj_match else "Unknown",
+                        "brand": brand_match.group(1) if brand_match else "",
+                        "model": model_match.group(1) if model_match else "",
+                        "serial_number": serial_match.group(1) if serial_match else "",
+                        "condition": condition_match.group(1) if condition_match else "unknown",
+                        "issues": [],
+                        "description": "Recovered from partial response"
+                    }
+                    print(f"Recovered partial data: {recovered}")
+                    return recovered
+            
+            print(f"No JSON found in response. Raw: {response[:200]}...")
         except Exception as e:
             print(f"JSON parse error: {e}. Raw response: {response[:300]}...")
         
         if response_type == "object":
             return {
                 "object": "Detection failed",
-                "brand": "Unknown",
-                "condition": "Unknown",
+                "brand": "",
+                "model": "",
+                "serial_number": "",
+                "condition": "unknown",
                 "issues": [],
                 "description": response[:500] if response else "Could not parse response"
             }
